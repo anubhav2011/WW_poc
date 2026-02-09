@@ -20,8 +20,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Use absolute path so the same DB is used regardless of cwd
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DB_PATH = PROJECT_ROOT / "data" / "workers.db"
+# Works in both direct execution and script execution environments
+DB_PATH = Path("/vercel/share/v0-project/data/workers.db")
 
 
 def get_db_connection(timeout: float = 30.0):
