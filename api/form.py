@@ -16,12 +16,240 @@ from ..config import PERSONAL_DOCUMENTS_DIR, EDUCATIONAL_DOCUMENTS_DIR, CVS_DIR,
 from ..services.ocr_service import ocr_to_text, PADDLEOCR_AVAILABLE, PYTESSERACT_AVAILABLE, get_ocr_instance
 from ..services.ocr_cleaner import clean_ocr_extraction, _normalize_name
 from ..services.education_ocr_cleaner import clean_education_ocr_extraction
+from ..services.llm_extractor import extract_personal_data_llm, extract_educational_data_llm
+from ..services.document_verifier import verify_documents, format_verification_error_message
 
 # Configure logging - Use root logger configured in main.py
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 router = APIRouter(prefix="/form", tags=["form"])
+
+
+async def process_ocr_background(worker_id: str, personal_doc_path: str, educational_doc_path: str = None):
+    """
+    NEW: Process documents with OCR → LLM extraction → Verification.
+    
+    This function:
+    1. Applies OCR on complete personal document (PDF/image)
+    2. Passes raw OCR text to LLM with structured JSON schema
+    3. Extracts name, DOB, address from personal document
+    4. For each educational document:
+       - Applies OCR on complete document
+       - Passes to LLM for structured extraction
+       - Extracts name, DOB, qualification, board, marks, etc.
+    5. Verifies name & DOB match between personal and educational docs
+    6. Updates verification status in database
+    
+    Args:
+        worker_id: Worker ID
+        personal_doc_path: Path to personal document
+        educational_doc_path: Path to first educational document (optional, will fetch all from DB)
+        
+    Returns:
+        Dict with processing results including verification status
+    """
+    logger.info("=" * 80)
+    logger.info(f"=== STARTING OCR + LLM + VERIFICATION for worker {worker_id} ===")
+    logger.info("=" * 80)
+    
+    result = {
+        "personal_saved": False,
+        "personal_has_data": False,
+        "education_saved_count": 0,
+        "verification_status": "pending",
+        "verification_errors": None
+    }
+    
+    try:
+        loop = asyncio.get_event_loop()
+        
+        # ===== STEP 1: Process Personal Document =====
+        logger.info(f"\n[STEP 1] Processing PERSONAL document: {personal_doc_path}")
+        
+        # Apply OCR on complete document
+        personal_ocr_text = await loop.run_in_executor(None, ocr_to_text, personal_doc_path)
+        
+        if not personal_ocr_text or len(personal_ocr_text.strip()) < 10:
+            logger.error(f"✗ OCR extraction failed for personal document (insufficient text: {len(personal_ocr_text) if personal_ocr_text else 0} chars)")
+            result["error"] = "OCR extraction failed for personal document"
+            return result
+        
+        logger.info(f"✓ OCR extracted {len(personal_ocr_text)} characters from personal document")
+        
+        # Pass raw OCR text to LLM for structured extraction
+        personal_data = await loop.run_in_executor(None, extract_personal_data_llm, personal_ocr_text)
+        
+        if not personal_data:
+            logger.error("✗ LLM extraction failed for personal document")
+            result["error"] = "LLM extraction failed for personal document"
+            return result
+        
+        logger.info(f"✓ LLM extracted personal data: name={personal_data.get('name')}, dob={personal_data.get('dob')}")
+        
+        # Save personal data to database
+        name = _normalize_name(personal_data.get('name') or '')
+        dob = personal_data.get('dob') or ''
+        address = personal_data.get('address') or ''
+        
+        personal_saved = crud.update_worker_data(worker_id, name, dob, address)
+        
+        if personal_saved:
+            # Also save extracted name and DOB for verification
+            crud.update_worker_verification(
+                worker_id,
+                status='pending',
+                extracted_name=name,
+                extracted_dob=dob
+            )
+            result["personal_saved"] = True
+            result["personal_has_data"] = bool(name and dob)
+            logger.info(f"✓ Personal data saved to database")
+        else:
+            logger.error("✗ Failed to save personal data to database")
+        
+        # ===== STEP 2: Process Educational Documents =====
+        logger.info(f"\n[STEP 2] Processing EDUCATIONAL documents")
+        
+        # Get all educational document paths from database
+        db_paths = crud.get_worker_document_paths(worker_id)
+        educational_doc_paths = db_paths.get("educational", [])
+        
+        # If no paths in database, try the provided path
+        if not educational_doc_paths and educational_doc_path:
+            educational_doc_paths = [educational_doc_path]
+        
+        logger.info(f"Found {len(educational_doc_paths)} educational document(s) to process")
+        
+        education_saved_count = 0
+        
+        for idx, edu_doc_path in enumerate(educational_doc_paths, 1):
+            logger.info(f"\n  [DOCUMENT {idx}/{len(educational_doc_paths)}] Processing: {edu_doc_path}")
+            
+            if not os.path.exists(edu_doc_path):
+                logger.warning(f"  ✗ File not found: {edu_doc_path}, skipping...")
+                continue
+            
+            # Apply OCR on complete document
+            edu_ocr_text = await loop.run_in_executor(None, ocr_to_text, edu_doc_path)
+            
+            if not edu_ocr_text or len(edu_ocr_text.strip()) < 10:
+                logger.warning(f"  ✗ OCR extraction failed for educational document (insufficient text)")
+                continue
+            
+            logger.info(f"  ✓ OCR extracted {len(edu_ocr_text)} characters")
+            
+            # Pass raw OCR text to LLM for structured extraction
+            edu_data = await loop.run_in_executor(None, extract_educational_data_llm, edu_ocr_text)
+            
+            if not edu_data:
+                logger.warning(f"  ✗ LLM extraction failed for educational document")
+                continue
+            
+            logger.info(f"  ✓ LLM extracted: qualification={edu_data.get('qualification')}, name={edu_data.get('name')}")
+            
+            # Save educational document with LLM data
+            edu_saved = crud.save_educational_document_with_llm_data(
+                worker_id,
+                edu_data,
+                raw_ocr_text=edu_ocr_text,
+                llm_data=edu_data
+            )
+            
+            if edu_saved:
+                education_saved_count += 1
+                logger.info(f"  ✓ Educational document {idx} saved to database")
+            else:
+                logger.warning(f"  ✗ Failed to save educational document {idx}")
+        
+        result["education_saved_count"] = education_saved_count
+        logger.info(f"\n✓ Saved {education_saved_count} educational document(s) to database")
+        
+        # ===== STEP 3: Verification =====
+        logger.info(f"\n[STEP 3] Starting VERIFICATION")
+        
+        # Get extraction status
+        extraction_status = crud.get_worker_extraction_status(worker_id)
+        
+        if not extraction_status.get("personal_extracted"):
+            logger.warning("⚠ Personal data not extracted, skipping verification")
+            result["verification_status"] = "pending"
+            result["verification_errors"] = "Personal data not extracted"
+            return result
+        
+        if extraction_status.get("educational_extracted", 0) == 0:
+            logger.warning("⚠ No educational documents extracted, skipping verification")
+            result["verification_status"] = "pending"
+            result["verification_errors"] = "No educational documents extracted"
+            return result
+        
+        # Get personal extracted data
+        personal_name = extraction_status.get("personal_name")
+        personal_dob = extraction_status.get("personal_dob")
+        
+        # Get educational documents for verification
+        educational_docs = crud.get_educational_documents_for_verification(worker_id)
+        
+        logger.info(f"Verifying {len(educational_docs)} educational document(s) against personal data")
+        logger.info(f"Personal data: name='{personal_name}', dob='{personal_dob}'")
+        
+        # Run verification
+        verification_result = verify_documents(personal_name, personal_dob, educational_docs)
+        
+        # Update verification status in database
+        if verification_result['status'] == 'verified':
+            logger.info(f"\n{'=' * 80}")
+            logger.info(f"✓✓✓ VERIFICATION SUCCESSFUL ✓✓✓")
+            logger.info(f"All {verification_result['verified_count']}/{verification_result['total_count']} documents verified")
+            logger.info(f"{'=' * 80}\n")
+            
+            crud.update_worker_verification(worker_id, status='verified')
+            result["verification_status"] = "verified"
+            
+            # Update individual educational documents
+            for comp in verification_result['comparisons']:
+                if comp['overall_match']:
+                    crud.update_educational_document_verification(comp['document_id'], 'verified')
+        else:
+            logger.warning(f"\n{'=' * 80}")
+            logger.warning(f"✗✗✗ VERIFICATION FAILED ✗✗✗")
+            logger.warning(f"Only {verification_result['verified_count']}/{verification_result['total_count']} documents verified")
+            logger.warning(f"Mismatches: {len(verification_result['mismatches'])}")
+            logger.warning(f"{'=' * 80}\n")
+            
+            crud.update_worker_verification(
+                worker_id, 
+                status='failed',
+                errors={"mismatches": verification_result['mismatches']}
+            )
+            result["verification_status"] = "failed"
+            result["verification_errors"] = verification_result['mismatches']
+            
+            # Update individual educational documents
+            for mismatch in verification_result['mismatches']:
+                doc_id = mismatch['document_id']
+                crud.update_educational_document_verification(
+                    doc_id, 
+                    'failed',
+                    errors={"field": mismatch['field'], "reason": mismatch.get('reason')}
+                )
+        
+        result["verification_result"] = verification_result
+        
+        logger.info(f"\n{'=' * 80}")
+        logger.info(f"=== OCR + LLM + VERIFICATION COMPLETED ===")
+        logger.info(f"Personal saved: {result['personal_saved']}")
+        logger.info(f"Education documents saved: {result['education_saved_count']}")
+        logger.info(f"Verification status: {result['verification_status']}")
+        logger.info(f"{'=' * 80}\n")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"✗✗✗ Error in OCR + LLM + Verification processing: {str(e)}", exc_info=True)
+        result["error"] = str(e)
+        result["verification_status"] = "failed"
+        return result
 
 
 def _worker_has_cv(worker_id: str) -> bool:
@@ -368,9 +596,49 @@ async def get_worker_data(worker_id: str):
         logger.info(
             f"  exp_ready: {exp_ready} (type: {type(exp_ready).__name__}), experience_data_available: {experience_data is not None}")
 
+        # Get verification status
+        extraction_status = crud.get_worker_extraction_status(worker_id)
+        verification_status = extraction_status.get("verification_status", "pending")
+        
+        # If verification failed, return 400 with error details
+        if verification_status == "failed":
+            verification_errors = worker_dict.get("verification_errors")
+            if verification_errors:
+                try:
+                    import json as json_module
+                    errors_dict = json_module.loads(verification_errors) if isinstance(verification_errors, str) else verification_errors
+                    error_message = format_verification_error_message({"status": "failed", "mismatches": errors_dict.get("mismatches", [])})
+                    
+                    logger.warning(f"✗ Verification failed for worker {worker_id}")
+                    logger.warning(f"Error message: {error_message}")
+                    
+                    return JSONResponse(
+                        status_code=400,
+                        content={
+                            "statusCode": 400,
+                            "responseData": {
+                                "status": "verification_failed",
+                                "message": "Document verification failed. Please re-upload correct documents.",
+                                "verification": {
+                                    "overall_status": "failed",
+                                    "mismatches": errors_dict.get("mismatches", [])
+                                },
+                                "action_required": error_message
+                            }
+                        }
+                    )
+                except Exception as e:
+                    logger.error(f"Error parsing verification errors: {e}")
+
         # Build response with all required fields (has_cv/has_experience for Access Resume visibility)
         # Normalize worker name for display (fixes existing DB records with OCR artifacts like leading ')
-        worker_for_response = {**worker_dict, "name": _normalize_name(worker_dict.get("name") or "")}
+        worker_for_response = {
+            **worker_dict, 
+            "name": _normalize_name(worker_dict.get("name") or ""),
+            "verification_status": verification_status,
+            "verified_at": worker_dict.get("verified_at")
+        }
+        
         response_data = {
             "status": "success",
             "worker": WorkerData.model_validate(worker_for_response).model_dump(),
@@ -381,6 +649,28 @@ async def get_worker_data(worker_id: str):
             "message": message,
             "exp_ready": exp_ready,  # FLAG-BASED FLOW: Include exp_ready flag
         }
+        
+        # Add verification information
+        if verification_status == "verified":
+            # Get verification details
+            educational_docs_verification = crud.get_educational_documents_for_verification(worker_id)
+            comparisons = []
+            for edu_doc in educational_docs_verification:
+                comparisons.append({
+                    "type": f"personal_vs_{edu_doc.get('qualification', 'document')}",
+                    "document_id": edu_doc.get('id'),
+                    "name_match": True,
+                    "dob_match": True,
+                    "result": "passed"
+                })
+            
+            response_data["verification"] = {
+                "overall_status": "verified",
+                "verified_at": worker_dict.get("verified_at"),
+                "comparisons": comparisons,
+                "mismatches": []
+            }
+            logger.info(f"✓ Verification status: VERIFIED")
 
         # FLAG-BASED FLOW: Include experience data and call_id if exp_ready=true
         if exp_ready:
@@ -394,6 +684,7 @@ async def get_worker_data(worker_id: str):
         logger.info(f"  - exp_ready in response: {response_data.get('exp_ready')}")
         logger.info(f"  - experience in response: {response_data.get('experience') is not None}")
         logger.info(f"  - call_id in response: {response_data.get('call_id') is not None}")
+        logger.info(f"  - verification_status: {verification_status}")
 
         return JSONResponse(
             status_code=200,

@@ -1563,3 +1563,301 @@ def mark_cv_generated(worker_id: str) -> bool:
     finally:
         if conn is not None:
             conn.close()
+
+
+# ========== VERIFICATION CRUD FUNCTIONS ==========
+
+def update_worker_verification(
+    worker_id: str, 
+    status: str, 
+    errors: dict = None, 
+    extracted_name: str = None, 
+    extracted_dob: str = None
+) -> bool:
+    """
+    Update verification status for worker.
+    
+    Args:
+        worker_id: Worker ID
+        status: 'verified', 'pending', 'failed'
+        errors: Dict of verification errors (will be JSON serialized)
+        extracted_name: Name extracted from personal document
+        extracted_dob: DOB extracted from personal document
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Serialize errors dict to JSON string if provided
+        errors_json = json.dumps(errors, ensure_ascii=False) if errors else None
+        
+        # Build dynamic SQL based on what fields are being updated
+        updates = ["verification_status = ?"]
+        values = [status]
+        
+        if errors_json is not None:
+            updates.append("verification_errors = ?")
+            values.append(errors_json)
+        
+        if extracted_name is not None:
+            updates.append("personal_extracted_name = ?")
+            values.append(extracted_name)
+        
+        if extracted_dob is not None:
+            updates.append("personal_extracted_dob = ?")
+            values.append(extracted_dob)
+        
+        # Add verified_at timestamp if status is verified
+        if status == 'verified':
+            updates.append("verified_at = CURRENT_TIMESTAMP")
+        
+        # Add worker_id for WHERE clause
+        values.append(worker_id)
+        
+        sql = f"UPDATE workers SET {', '.join(updates)} WHERE worker_id = ?"
+        
+        cursor.execute(sql, tuple(values))
+        conn.commit()
+        
+        if cursor.rowcount == 0:
+            logger.error(f"UPDATE workers matched 0 rows for worker_id={worker_id!r}. Worker may not exist.")
+            return False
+        
+        logger.info(f"✓ Updated verification status for worker {worker_id}: status={status}")
+        return True
+    except Exception as e:
+        logger.error(f"Error updating worker verification for {worker_id}: {str(e)}", exc_info=True)
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def save_educational_document_with_llm_data(
+    worker_id: str, 
+    education_data: dict, 
+    raw_ocr_text: str, 
+    llm_data: dict
+) -> bool:
+    """
+    Save educational document with OCR + LLM extracted data.
+    
+    Args:
+        worker_id: Worker ID
+        education_data: Structured education data from LLM
+        raw_ocr_text: Complete raw OCR text
+        llm_data: Full JSON response from LLM
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        logger.info(f"[EDU+LLM SAVE] Saving educational document with LLM data for {worker_id}")
+        logger.info(f"[EDU+LLM SAVE] Education data: {education_data}")
+        
+        # Convert percentage to float if it exists
+        percentage = education_data.get("percentage")
+        if percentage and isinstance(percentage, str):
+            try:
+                percentage_str = percentage.replace("%", "").strip()
+                percentage = float(percentage_str) if percentage_str else None
+            except (ValueError, AttributeError):
+                logger.warning(f"[EDU+LLM SAVE] Could not convert percentage to float: {percentage}")
+                percentage = None
+        
+        # Serialize JSON data
+        llm_data_json = json.dumps(llm_data, ensure_ascii=False)
+        
+        cursor.execute("""
+        INSERT INTO educational_documents 
+        (worker_id, document_type, qualification, board, stream, year_of_passing, 
+         school_name, marks_type, marks, percentage, 
+         raw_ocr_text, llm_extracted_data, extracted_name, extracted_dob, verification_status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            worker_id,
+            education_data.get("document_type"),
+            education_data.get("qualification"),
+            education_data.get("board"),
+            education_data.get("stream"),
+            education_data.get("year_of_passing"),
+            education_data.get("school_name"),
+            education_data.get("marks_type"),
+            education_data.get("marks"),
+            percentage,
+            raw_ocr_text,
+            llm_data_json,
+            education_data.get("name"),  # extracted_name for verification
+            education_data.get("dob"),   # extracted_dob for verification
+            'pending'  # Initial verification status
+        ))
+        conn.commit()
+        logger.info(f"[EDU+LLM SAVE] ✓ Educational document with LLM data saved successfully for {worker_id}")
+        return True
+    except Exception as e:
+        logger.error(f"[EDU+LLM SAVE] ✗ Error saving educational document for {worker_id}: {str(e)}", exc_info=True)
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def update_educational_document_verification(doc_id: int, status: str, errors: dict = None) -> bool:
+    """
+    Update verification status for an educational document.
+    
+    Args:
+        doc_id: Educational document ID
+        status: 'verified', 'pending', 'failed'
+        errors: Dict of verification errors
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        errors_json = json.dumps(errors, ensure_ascii=False) if errors else None
+        
+        cursor.execute("""
+        UPDATE educational_documents 
+        SET verification_status = ?, verification_errors = ?
+        WHERE id = ?
+        """, (status, errors_json, doc_id))
+        conn.commit()
+        
+        if cursor.rowcount == 0:
+            logger.error(f"UPDATE educational_documents matched 0 rows for doc_id={doc_id}")
+            return False
+        
+        logger.info(f"✓ Updated verification status for educational doc {doc_id}: status={status}")
+        return True
+    except Exception as e:
+        logger.error(f"Error updating educational document verification for {doc_id}: {str(e)}", exc_info=True)
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_worker_extraction_status(worker_id: str) -> dict:
+    """
+    Check if personal and educational data has been extracted.
+    
+    Returns:
+        {
+            "personal_extracted": bool,
+            "personal_name": str or None,
+            "personal_dob": str or None,
+            "educational_extracted": int (count),
+            "verification_status": str
+        }
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Check personal extraction
+        cursor.execute("""
+        SELECT personal_extracted_name, personal_extracted_dob, verification_status 
+        FROM workers 
+        WHERE worker_id = ?
+        """, (worker_id,))
+        row = cursor.fetchone()
+        
+        personal_extracted = False
+        personal_name = None
+        personal_dob = None
+        verification_status = 'pending'
+        
+        if row:
+            personal_name = row[0]
+            personal_dob = row[1]
+            verification_status = row[2] or 'pending'
+            personal_extracted = bool(personal_name and personal_dob)
+        
+        # Check educational extraction (count documents with extracted_name)
+        cursor.execute("""
+        SELECT COUNT(*) 
+        FROM educational_documents 
+        WHERE worker_id = ? AND extracted_name IS NOT NULL AND extracted_name != ''
+        """, (worker_id,))
+        edu_count = cursor.fetchone()[0] if cursor.fetchone() else 0
+        
+        result = {
+            "personal_extracted": personal_extracted,
+            "personal_name": personal_name,
+            "personal_dob": personal_dob,
+            "educational_extracted": edu_count,
+            "verification_status": verification_status
+        }
+        
+        logger.info(f"Extraction status for {worker_id}: {result}")
+        return result
+    except Exception as e:
+        logger.error(f"Error getting extraction status for {worker_id}: {str(e)}", exc_info=True)
+        return {
+            "personal_extracted": False,
+            "personal_name": None,
+            "personal_dob": None,
+            "educational_extracted": 0,
+            "verification_status": "pending"
+        }
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_educational_documents_for_verification(worker_id: str) -> list:
+    """
+    Get educational documents with extracted name and DOB for verification.
+    
+    Returns:
+        List of dicts with:
+        - id
+        - qualification
+        - extracted_name
+        - extracted_dob
+        - verification_status
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+        SELECT id, qualification, extracted_name, extracted_dob, verification_status
+        FROM educational_documents 
+        WHERE worker_id = ?
+        ORDER BY id
+        """, (worker_id,))
+        rows = cursor.fetchall()
+        
+        documents = []
+        for row in rows:
+            documents.append({
+                "id": row[0],
+                "qualification": row[1],
+                "extracted_name": row[2],
+                "extracted_dob": row[3],
+                "verification_status": row[4] or 'pending'
+            })
+        
+        logger.info(f"Retrieved {len(documents)} educational documents for verification (worker: {worker_id})")
+        return documents
+    except Exception as e:
+        logger.error(f"Error getting educational documents for verification: {str(e)}", exc_info=True)
+        return []
+    finally:
+        if conn is not None:
+            conn.close()
