@@ -46,6 +46,7 @@ def run_all_migrations():
     runner = MigrationRunner(str(DB_PATH))
     
     # Define all migrations in order
+    # These will run in sequence, skipping any already applied
     migrations = [
         InitializeSchema(),
         AddVerificationColumns(),
