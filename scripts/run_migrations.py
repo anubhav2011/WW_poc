@@ -16,8 +16,19 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Add scripts directory to path to import migrations
-SCRIPTS_DIR = Path(__file__).resolve().parent
+try:
+    SCRIPTS_DIR = Path(__file__).resolve().parent
+except NameError:
+    # When __file__ is not defined (in some execution environments)
+    # Look for scripts directory from current directory
+    cwd = Path.cwd()
+    if (cwd / "scripts").exists():
+        SCRIPTS_DIR = cwd / "scripts"
+    else:
+        SCRIPTS_DIR = cwd
+    
 sys.path.insert(0, str(SCRIPTS_DIR))
+logger.info(f"Scripts directory: {SCRIPTS_DIR}")
 
 from migration_base import MigrationRunner
 from importlib import import_module

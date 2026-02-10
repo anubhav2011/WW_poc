@@ -222,6 +222,58 @@ def run_migration():
         END
         """)
 
+        # Add verification columns to workers table
+        logger.info("Adding verification columns to workers table...")
+        try:
+            cursor.execute("ALTER TABLE workers ADD COLUMN name_verified BOOLEAN DEFAULT 0")
+            logger.info("  ✓ Added name_verified column")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
+            logger.info("  - name_verified column already exists")
+
+        try:
+            cursor.execute("ALTER TABLE workers ADD COLUMN dob_verified BOOLEAN DEFAULT 0")
+            logger.info("  ✓ Added dob_verified column")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
+            logger.info("  - dob_verified column already exists")
+
+        try:
+            cursor.execute("ALTER TABLE workers ADD COLUMN verification_status TEXT DEFAULT 'pending'")
+            logger.info("  ✓ Added verification_status column")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
+            logger.info("  - verification_status column already exists")
+
+        try:
+            cursor.execute("ALTER TABLE workers ADD COLUMN verified_at TIMESTAMP")
+            logger.info("  ✓ Added verified_at column")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
+            logger.info("  - verified_at column already exists")
+
+        # Add verification columns to educational_documents table
+        logger.info("Adding verification columns to educational_documents table...")
+        try:
+            cursor.execute("ALTER TABLE educational_documents ADD COLUMN verified BOOLEAN DEFAULT 0")
+            logger.info("  ✓ Added verified column")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
+            logger.info("  - verified column already exists")
+
+        try:
+            cursor.execute("ALTER TABLE educational_documents ADD COLUMN verification_notes TEXT")
+            logger.info("  ✓ Added verification_notes column")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
+            logger.info("  - verification_notes column already exists")
+
         conn.commit()
         logger.info("Database initialized successfully!")
         logger.info(f"Database location: {DB_PATH}")
