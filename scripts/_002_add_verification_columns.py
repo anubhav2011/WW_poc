@@ -5,8 +5,12 @@ Purpose: Add verification fields to support name and DOB matching
 Date: 2026-02-10
 """
 
+import sys
 import sqlite3
 import logging
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
 from migration_base import Migration
 
 logger = logging.getLogger(__name__)

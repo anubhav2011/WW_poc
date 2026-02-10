@@ -18,13 +18,20 @@ logger = logging.getLogger(__name__)
 
 # Add project root to path
 try:
-    PROJECT_ROOT = Path(__file__).parent.parent
+    SCRIPTS_DIR = Path(__file__).parent
+    PROJECT_ROOT = SCRIPTS_DIR.parent
 except NameError:
-    # If __file__ is not defined, use current working directory
-    PROJECT_ROOT = Path.cwd()
+    # Fallback: assume we're in the project root or scripts directory
+    cwd = Path.cwd()
+    if cwd.name == 'scripts':
+        SCRIPTS_DIR = cwd
+        PROJECT_ROOT = cwd.parent
+    else:
+        PROJECT_ROOT = cwd
+        SCRIPTS_DIR = cwd / 'scripts'
 
 sys.path.insert(0, str(PROJECT_ROOT))
-sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+sys.path.insert(0, str(SCRIPTS_DIR))
 
 from migration_base import MigrationRunner
 from _001_init_schema import InitializeSchema
