@@ -186,6 +186,7 @@ def extract_text_from_image(image_path: str) -> str:
     text = extract_text_paddle(image_path)
     if text and len(text) > 50:
         logger.info(f"PaddleOCR extraction successful: {len(text)} characters extracted")
+        logger.info(f"[RAW_OCR] PaddleOCR extracted text (first 500 chars): {text[:500]}")
         return text
     elif text:
         logger.warning(f"PaddleOCR extracted minimal text ({len(text)} chars), trying Tesseract...")
@@ -195,6 +196,7 @@ def extract_text_from_image(image_path: str) -> str:
     text = extract_text_tesseract(image_path)
     if text and len(text) > 50:
         logger.info(f"Tesseract extraction successful: {len(text)} characters extracted")
+        logger.info(f"[RAW_OCR] Tesseract extracted text (first 500 chars): {text[:500]}")
         return text
     elif text:
         logger.warning(f"Tesseract extracted minimal text ({len(text)} chars)")
@@ -202,6 +204,7 @@ def extract_text_from_image(image_path: str) -> str:
     # If both fail, return combined results if any text was extracted
     if text:
         logger.warning(f"Returning minimal OCR results: {len(text)} characters")
+        logger.info(f"[RAW_OCR] Minimal text extracted (first 500 chars): {text[:500]}")
         return text
 
     logger.error("All OCR methods failed to extract sufficient text from image")
@@ -227,6 +230,7 @@ def extract_text_from_pdf(pdf_path: str) -> str:
         
         if text and len(text.strip()) > 10:
             logger.info(f"pdfplumber: Successfully extracted {len(text)} characters from PDF")
+            logger.info(f"[RAW_OCR] PDF pdfplumber extracted text (first 500 chars): {text[:500]}")
             return text.strip()
         else:
             logger.warning(f"pdfplumber: Extracted minimal text ({len(text)} chars), trying PyPDF2...")
@@ -250,6 +254,7 @@ def extract_text_from_pdf(pdf_path: str) -> str:
         
         if text and len(text.strip()) > 10:
             logger.info(f"PyPDF2: Successfully extracted {len(text)} characters from PDF")
+            logger.info(f"[RAW_OCR] PDF PyPDF2 extracted text (first 500 chars): {text[:500]}")
             return text.strip()
         else:
             logger.warning(f"PyPDF2: Extracted minimal text ({len(text)} chars)")
@@ -286,6 +291,7 @@ def extract_text_from_pdf(pdf_path: str) -> str:
                 
                 if ocr_text and len(ocr_text.strip()) > 10:
                     logger.info(f"OCR on PDF first page: Extracted {len(ocr_text)} characters")
+                    logger.info(f"[RAW_OCR] PDF scanned page OCR text (first 500 chars): {ocr_text[:500]}")
                     return ocr_text.strip()
             finally:
                 # Clean up temp file with retry logic

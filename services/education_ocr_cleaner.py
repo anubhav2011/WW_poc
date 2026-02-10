@@ -12,21 +12,41 @@ logger = logging.getLogger(__name__)
 # RAW OCR TEXT IS DISCARDED AFTER PROCESSING
 # ONLY EXTRACTED FIELDS ARE STORED
 
-EDUCATION_EXTRACTION_PROMPT = """You are given OCR text from an educational document (marksheet, certificate, etc.).
+EDUCATION_EXTRACTION_PROMPT = """You are given OCR text from an educational document (marksheet, certificate, etc.) from India.
 
-Extract ONLY these fields:
-1. Qualification: The degree/qualification name (e.g., "Bachelor of Science", "Diploma", "Class 12", "Class 10", etc.)
-2. Board: The board name (e.g., "CBSE", "ICSE", "State Board", etc.) - if not found leave empty
-3. Year of Passing: Year of completion (in YYYY format)
-4. School Name: Name of the school/college/university
-5. Stream: The stream or specialization (e.g., "Science", "Commerce", "Arts", "Computer Science", etc.) - can be null for Class 10
-6. Marks Type: Specify as either "Percentage" or "CGPA" (look for % or CGPA in document)
-7. Marks: The marks value with % or CGPA format (e.g., "62%", "3.5 CGPA")
+Extract ALL of these fields carefully and completely:
+
+CRITICAL FIELDS (MUST EXTRACT FOR VERIFICATION):
+1. name: Student's full name EXACTLY as printed on document. Search in:
+   - Student/Candidate name field
+   - Roll number row (often has name)
+   - Candidate information section
+   - Any header with student details
+   DO NOT leave blank if name is visible in document
+   
+2. dob: Date of birth in DD-MM-YYYY format. Search in:
+   - DOB/D.O.B field
+   - Date of Birth row
+   - Birth date section
+   - Enrollment/admission info showing birth date
+   DO NOT leave blank if DOB is visible in document
+
+EDUCATIONAL FIELDS:
+3. Qualification: The degree/qualification name (e.g., "Bachelor of Science", "Diploma", "Class 12", "Class 10", etc.)
+4. Board: The board name (e.g., "CBSE", "ICSE", "State Board", etc.)
+5. Year of Passing: Year of completion (in YYYY format)
+6. School Name: Name of the school/college/university
+7. Stream: The stream or specialization (e.g., "Science", "Commerce", "Arts", "Computer Science", etc.)
+8. Marks Type: Specify as either "Percentage" or "CGPA" (look for % or CGPA in document)
+9. Marks: The marks value with % or CGPA format (e.g., "62%", "3.5 CGPA")
 
 Important Rules:
+- ALWAYS search the entire document for name and DOB - these are CRITICAL for verification
+- For name: Copy EXACTLY as printed, preserve capitalization. If multiple name fields, use student's name (not teacher/examiner names)
+- For DOB: Normalize to DD-MM-YYYY format. If you see "12/01/1987" convert to "12-01-1987"
 - Do NOT infer or guess missing information
-- If field is not found, use empty string "" or null for optional fields
-- Return ONLY valid JSON, no extra text
+- If field is not found on document, set to empty string ""
+- Return ONLY valid JSON, no extra text, no markdown
 - Handle OCR errors like 'O' for '0' and 'l' for '1'
 - For marks_type, choose between "Percentage" or "CGPA" based on the document
 - For marks, include the symbol (% or CGPA)
@@ -34,8 +54,10 @@ Important Rules:
 Input OCR text:
 {ocr_text}
 
-Return this JSON format exactly:
+Return this JSON format exactly (ALL fields required):
 {{
+    "name": "",
+    "dob": "",
     "qualification": "",
     "board": "",
     "year_of_passing": "",
@@ -401,10 +423,13 @@ def extract_marks_and_type(ocr_text: str) -> tuple:
 def rule_based_education_extraction(ocr_text: str) -> dict:
     """
     Rule-based extraction for educational documents using multiple strategies.
+    Now also attempts to extract name and DOB for identity verification.
     """
     if not ocr_text or len(ocr_text.strip()) < 10:
         logger.warning("OCR text too short for education extraction")
         return {
+            "name": "",
+            "dob": "",
             "qualification": "",
             "board": "",
             "year_of_passing": "",
@@ -415,6 +440,8 @@ def rule_based_education_extraction(ocr_text: str) -> dict:
         }
 
     result = {
+        "name": "",
+        "dob": "",
         "qualification": extract_qualification(ocr_text),
         "board": extract_board(ocr_text),
         "year_of_passing": extract_year_of_passing(ocr_text),
@@ -428,9 +455,39 @@ def rule_based_education_extraction(ocr_text: str) -> dict:
     marks, marks_type = extract_marks_and_type(ocr_text)
     result["marks"] = marks
     result["marks_type"] = marks_type
+    
+    # Attempt to extract name - look for common patterns in educational documents
+    logger.debug("Attempting to extract name from educational document...")
+    lines = [line.strip() for line in ocr_text.split('\n') if line.strip()]
+    
+    # Pattern 1: "Name:" or "Student Name:"
+    name_pattern = r'(?:Name|Student Name|Candidate Name)\s*:?\s*([A-Z][A-Za-z\s]+?)(?:\n|Roll|Father|Mother|$)'
+    name_match = re.search(name_pattern, ocr_text, re.IGNORECASE)
+    if name_match:
+        extracted_name = name_match.group(1).strip()
+        if len(extracted_name) > 3 and len(extracted_name) < 100:
+            result["name"] = extracted_name
+            logger.info(f"Rule-based: Found name: {result['name']}")
+    
+    # Attempt to extract DOB - look for common patterns
+    logger.debug("Attempting to extract DOB from educational document...")
+    
+    # Pattern 1: "DOB:" or "Date of Birth:"
+    dob_patterns = [
+        r'(?:DOB|D\.O\.B|Date\s+of\s+Birth)\s*:?\s*(\d{1,2})[/-](\d{1,2})[/-](\d{4})',
+        r'\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b',  # General date pattern
+    ]
+    
+    for pattern in dob_patterns:
+        dob_match = re.search(pattern, ocr_text, re.IGNORECASE)
+        if dob_match:
+            day, month, year = dob_match.groups()[:3]
+            result["dob"] = f"{day}-{month}-{year}"
+            logger.info(f"Rule-based: Found DOB: {result['dob']}")
+            break
 
     logger.info(
-        f"Rule-based extraction result: qualification={result['qualification']}, board={result['board']}, year={result['year_of_passing']}, school={result['school_name']}, stream={result['stream']}, marks={result['marks']}, marks_type={result['marks_type']}")
+        f"Rule-based extraction result: name={repr(result['name'])}, dob={repr(result['dob'])}, qualification={result['qualification']}, board={result['board']}, year={result['year_of_passing']}, school={result['school_name']}, stream={result['stream']}, marks={result['marks']}, marks_type={result['marks_type']}")
     return result
 
 
@@ -444,11 +501,13 @@ def parse_education_response(response_text: str) -> Optional[dict]:
             logger.debug(f"Extracted JSON: {json_str}")
             data = json.loads(json_str)
 
-            # Validate required fields exist
-            if isinstance(data, dict) and all(key in data for key in
-                                              ["qualification", "board", "year_of_passing", "school_name", "stream",
-                                               "marks_type", "marks"]):
-                return {
+            # Validate all fields exist (including name and dob)
+            required_fields = ["name", "dob", "qualification", "board", "year_of_passing", "school_name", "stream",
+                               "marks_type", "marks"]
+            if isinstance(data, dict) and all(key in data for key in required_fields):
+                result = {
+                    "name": str(data.get("name", "")).strip(),
+                    "dob": str(data.get("dob", "")).strip(),
                     "qualification": str(data.get("qualification", "")).strip(),
                     "board": str(data.get("board", "")).strip(),
                     "year_of_passing": str(data.get("year_of_passing", "")).strip(),
@@ -457,6 +516,8 @@ def parse_education_response(response_text: str) -> Optional[dict]:
                     "marks_type": str(data.get("marks_type", "")).strip(),
                     "marks": str(data.get("marks", "")).strip()
                 }
+                logger.info(f"[PARSE] Parsed response: name={repr(result['name'])}, dob={repr(result['dob'])}")
+                return result
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse JSON: {e}")
     except Exception as e:
@@ -500,15 +561,18 @@ def extract_education_with_openai(ocr_text: str) -> Optional[dict]:
 
 def clean_education_ocr_extraction(ocr_text: str) -> dict:
     """
-    Clean OCR text from educational document and extract only necessary fields.
+    Clean OCR text from educational document and extract all necessary fields including name and DOB.
     Try rule-based first, then fallback to OpenAI if critical fields are missing.
     """
     logger.info("=== Starting Education OCR extraction ===")
     logger.debug(f"OCR text length: {len(ocr_text)} characters")
+    logger.debug(f"Raw OCR text preview (first 300 chars): {ocr_text[:300]}")
 
     if not ocr_text or len(ocr_text.strip()) < 10:
         logger.error("OCR text is empty or too short")
         return {
+            "name": "",
+            "dob": "",
             "qualification": "",
             "board": "",
             "year_of_passing": "",
@@ -520,26 +584,33 @@ def clean_education_ocr_extraction(ocr_text: str) -> dict:
 
     # Rule-based extraction first (deterministic, no LLM cost)
     result = rule_based_education_extraction(ocr_text)
+    
+    logger.info(f"[RULE-BASED] Extracted: name={repr(result.get('name'))}, dob={repr(result.get('dob'))}")
 
     # Check if we have critical fields
+    has_name = bool(result.get("name", "").strip())
+    has_dob = bool(result.get("dob", "").strip())
     has_qualification = bool(result.get("qualification", "").strip())
     has_year = bool(result.get("year_of_passing", "").strip())
     has_school = bool(result.get("school_name", "").strip())
 
     logger.info(
-        f"Rule-based extraction results - Qualification: {has_qualification}, Year: {has_year}, School: {has_school}")
+        f"Rule-based extraction results - Name: {has_name}, DOB: {has_dob}, Qualification: {has_qualification}, Year: {has_year}, School: {has_school}")
 
-    # If we're missing critical data, try OpenAI
-    if not (has_qualification and has_year and has_school):
-        logger.info("Missing critical fields, attempting OpenAI extraction...")
+    # If we're missing critical data (especially name and dob for verification), try OpenAI
+    # Prioritize name and DOB since they're needed for verification
+    if not (has_name and has_dob) or not (has_qualification and has_year and has_school):
+        logger.info("Missing critical fields (name/dob for verification or education fields), attempting OpenAI extraction...")
         openai_result = extract_education_with_openai(ocr_text)
 
         if openai_result:
+            logger.info(f"[OPENAI] Extracted: name={repr(openai_result.get('name'))}, dob={repr(openai_result.get('dob'))}")
             # Merge results: use OpenAI values for empty fields
             for key in result:
                 if not result[key] and openai_result.get(key):
                     result[key] = openai_result[key]
+                    logger.info(f"[MERGE] Using OpenAI value for {key}: {repr(result[key])}")
             logger.info("OpenAI merged with rule-based extraction")
 
-    logger.info(f"Final education extraction: {result}")
+    logger.info(f"[FINAL] Education extraction result: name={repr(result.get('name'))}, dob={repr(result.get('dob'))}, qualification={result.get('qualification')}")
     return result
