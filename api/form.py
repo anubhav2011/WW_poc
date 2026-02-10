@@ -497,6 +497,58 @@ async def get_worker_data(worker_id: str):
                 worker = crud.get_worker(worker_id)
                 if worker:
                     worker_dict = dict(worker)
+                
+                # After OCR processing, trigger verification if both personal and educational data were extracted
+                if ocr_result and ocr_result.get("personal_saved") and ocr_result.get("education_saved_count", 0) > 0:
+                    logger.info(f"[VERIFICATION] Both personal and educational data extracted, running verification...")
+                    try:
+                        # Get extraction status
+                        extraction_status = crud.get_worker_extraction_status(worker_id)
+                        
+                        if extraction_status.get("personal_extracted") and extraction_status.get("educational_extracted", 0) > 0:
+                            personal_name = extraction_status.get("personal_name")
+                            personal_dob = extraction_status.get("personal_dob")
+                            educational_docs = crud.get_educational_documents_for_verification(worker_id)
+                            
+                            logger.info(f"[VERIFICATION] Running verification with: personal_name='{personal_name}', personal_dob='{personal_dob}', edu_docs={len(educational_docs)}")
+                            
+                            # Run verification
+                            verification_result = verify_documents(personal_name, personal_dob, educational_docs)
+                            
+                            # Update verification status in database
+                            if verification_result['status'] == 'verified':
+                                logger.info(f"[VERIFICATION] ✓ VERIFICATION SUCCESSFUL - All {verification_result['verified_count']}/{verification_result['total_count']} documents verified")
+                                crud.update_worker_verification(worker_id, status='verified')
+                                
+                                # Update individual educational documents
+                                for comp in verification_result['comparisons']:
+                                    if comp['overall_match']:
+                                        crud.update_educational_document_verification(comp['document_id'], 'verified')
+                            else:
+                                logger.warning(f"[VERIFICATION] ✗ VERIFICATION FAILED - Only {verification_result['verified_count']}/{verification_result['total_count']} documents verified")
+                                crud.update_worker_verification(
+                                    worker_id, 
+                                    status='failed',
+                                    errors={"mismatches": verification_result['mismatches']}
+                                )
+                                
+                                # Update individual educational documents
+                                for mismatch in verification_result['mismatches']:
+                                    doc_id = mismatch['document_id']
+                                    crud.update_educational_document_verification(
+                                        doc_id, 
+                                        'failed',
+                                        errors={"field": mismatch['field'], "reason": mismatch.get('reason')}
+                                    )
+                            
+                            # Refresh worker data again to get updated verification status
+                            worker = crud.get_worker(worker_id)
+                            if worker:
+                                worker_dict = dict(worker)
+                        else:
+                            logger.warning(f"[VERIFICATION] Skipping verification - personal_extracted={extraction_status.get('personal_extracted')}, educational_extracted={extraction_status.get('educational_extracted')}")
+                    except Exception as e:
+                        logger.error(f"[VERIFICATION] Error during verification: {str(e)}", exc_info=True)
 
                 # Set ocr_status and message from actual OCR result
                 if ocr_result:

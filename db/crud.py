@@ -64,17 +64,19 @@ def update_worker_data(worker_id: str, name: str, dob: str, address: str) -> boo
 
         logger.info(
             f"Updating worker data for {worker_id}: name={bool(name)}, dob={bool(dob)}, address={bool(address)}")
+        logger.info(f"  Values: name='{name}', dob='{dob}', address='{address}'")
+        logger.info(f"  Also setting: personal_extracted_name='{name}', personal_extracted_dob='{dob}'")
 
         cursor.execute("""
         UPDATE workers 
-        SET name = ?, dob = ?, address = ?
+        SET name = ?, dob = ?, address = ?, personal_extracted_name = ?, personal_extracted_dob = ?
         WHERE worker_id = ?
-        """, (name, dob, address, worker_id))
+        """, (name, dob, address, name, dob, worker_id))
         conn.commit()
         if cursor.rowcount == 0:
             logger.error(f"UPDATE workers matched 0 rows for worker_id={worker_id!r}. Worker may not exist.")
             return False
-        logger.info(f"Successfully updated worker {worker_id} (rowcount={cursor.rowcount})")
+        logger.info(f"Successfully updated worker {worker_id} (rowcount={cursor.rowcount}) with personal_extracted_name and personal_extracted_dob")
         return True
     except Exception as e:
         logger.error(f"Error updating worker data {worker_id}: {str(e)}", exc_info=True)
