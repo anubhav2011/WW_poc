@@ -213,94 +213,96 @@ Return ONLY the JSON object:"""
 def extract_educational_data_llm(raw_ocr_text: str) -> Optional[Dict]:
     """
     Extract structured educational document data using LLM.
+    MANDATORY: name and dob MUST be extracted.
     
     Args:
         raw_ocr_text: Complete OCR text from educational document (marksheet)
         
     Returns:
-        Dict with extracted data:
-        {
-            "name": "BABU KHAN",
-            "dob": "01-12-1987",
-            "document_type": "marksheet",
-            "qualification": "Class 10",
-            "board": "CBSE",
-            "stream": null,
-            "year_of_passing": "2017",
-            "school_name": "ST DON BOSCO COLLEGE",
-            "marks_type": "CGPA",
-            "marks": "07.4 CGPA"
-        }
+        Dict with extracted data including MANDATORY name and dob fields
     """
     logger.info("=== Starting LLM extraction for EDUCATIONAL document ===")
     logger.info(f"OCR text length: {len(raw_ocr_text)} characters")
     
-    system_prompt = """You are an expert data extraction assistant specializing in Indian educational documents (marksheets, certificates, degrees).
+    system_prompt = """You are an expert document extraction specialist for Indian educational documents.
 
-Your task is to extract structured information from OCR text and return ONLY a valid JSON object. Do not include any explanations or markdown formatting.
+Your PRIMARY task is to EXTRACT the student's NAME and DATE OF BIRTH from the document.
+These are MANDATORY fields. If they exist anywhere on the document, you MUST find them.
+Return a valid JSON object with exact extracted data."""
 
-CRITICAL: You MUST extract the student's name and date of birth. These are non-negotiable fields used for identity verification. Even if you have to search the entire document, find these fields."""
+    user_prompt = f"""MANDATORY EXTRACTION REQUIRED:
 
-    user_prompt = f"""Extract the following information from this educational document (marksheet/certificate) OCR text:
+You MUST extract these CRITICAL fields from the educational document OCR text:
 
-CRITICAL FIELDS (MUST EXTRACT - DO NOT LEAVE AS NULL):
-1. name: Student's full name EXACTLY as printed on document. Search all sections of the document including:
-   - Name field at top
-   - Roll number row often has name
-   - Candidate information section
-   - Header information
-   MUST EXTRACT - Set to null ONLY if genuinely not present
+1. **name** (MANDATORY): Student's full name - Search EVERYWHERE:
+   - Top of page in name field
+   - Next to roll number
+   - In candidate information section
+   - In header "Name of Student"
+   - Return EXACTLY as printed on document
+   - Do NOT return null unless absolutely not on document
    
-2. dob: Date of birth in DD-MM-YYYY format. Search for:
-   - DOB field
-   - Date of Birth field
-   - D.O.B or D/O/B
-   - Birth date in any date field
-   - Enrollment date might show birth year
-   MUST EXTRACT - Set to null ONLY if genuinely not present
+2. **dob** (MANDATORY): Date of birth - Search EVERYWHERE:
+   - DOB field / Date of Birth field
+   - D.O.B or D/O/B notation
+   - Birth date in any format
+   - Return in DD-MM-YYYY format ONLY
+   - Do NOT return null unless absolutely not on document
 
-OTHER FIELDS:
-- document_type: Always "marksheet" for educational documents
-- qualification: Class/Standard (normalize to "Class 10" or "Class 12")
-- board: Board/Council name (e.g., "CBSE", "ICSE", "State Board", "UP Board")
-- stream: Stream if Class 12 (e.g., "Science", "Commerce", "Arts"), null for Class 10
-- year_of_passing: Year of passing in YYYY format (e.g., "2017")
-- school_name: School/College name
-- marks_type: Either "CGPA" or "Percentage"
-- marks: The marks value with unit (e.g., "7.4 CGPA" or "85%")
+3. **qualification**: Class 10 or Class 12 (e.g., "Class 10", "Class 12", "Standard 12")
+4. **board**: Board name (CBSE, ICSE, State Board, UP Board, etc.)
+5. **year_of_passing**: Year in YYYY format
+6. **school_name**: School/College name  
+7. **stream**: Science/Commerce/Arts (null for Class 10)
+8. **marks_type**: "Percentage" or "CGPA"
+9. **marks**: Value with unit (e.g., "7.4 CGPA", "85%")
+10. **document_type**: Always "marksheet"
 
-EXTRACTION RULES:
-1. For name: Copy EXACTLY as printed, preserve capitalization. If multiple name fields found, use the one most associated with student (not examiner/teacher names)
-2. For dob: Normalize to DD-MM-YYYY format. If you see "12/01/1987" convert to "12-01-1987". If year only is visible (e.g., "1987"), search for full date nearby.
-3. If name is NOT on marksheet, still set to null (but search thoroughly)
-4. If dob is NOT on marksheet, still set to null (but search thoroughly)
-5. All other fields: set to null if not found
-6. Return ONLY valid JSON with these exact field names
+CRITICAL RULES:
+- name and dob are NON-NEGOTIABLE. Search the ENTIRE document
+- If name/dob is visible ANYWHERE on the page, you MUST extract it
+- Return null ONLY if genuinely not present after thorough search
+- All other fields can be null if not found
 
-OCR Text from Document:
+OCR Text:
 \"\"\"
 {raw_ocr_text}
 \"\"\"
 
-Return ONLY the JSON object (no markdown, no explanations):"""
+Return ONLY this JSON format (ALL fields required):
+{{
+    "name": "EXTRACTED_NAME_HERE",
+    "dob": "DD-MM-YYYY",
+    "qualification": "Class 10",
+    "board": "CBSE",
+    "year_of_passing": "2017",
+    "school_name": "SCHOOL_NAME",
+    "stream": null,
+    "marks_type": "CGPA",
+    "marks": "7.4 CGPA",
+    "document_type": "marksheet"
+}}
 
-    logger.info(f"[EDU-LLM] Sending extraction prompt to LLM...")
+NO explanations, NO markdown, ONLY JSON."""
+
+    logger.info(f"[EDU-LLM] Sending MANDATORY extraction prompt to LLM...")
+    logger.info(f"[EDU-LLM] Prompt emphasizes name and dob are MANDATORY fields")
+    
     result = call_llm_with_retry(user_prompt, system_prompt)
     
     if result:
+        logger.info(f"[EDU-LLM] [STEP 1] LLM returned result with keys: {list(result.keys())}")
+        logger.info(f"[EDU-LLM] [STEP 1] name={repr(result.get('name'))}, dob={repr(result.get('dob'))}")
+        
         # Validate required fields exist
-        required_edu_fields = ["name", "dob", "qualification", "board", "year_of_passing", "school_name", "stream", "marks_type", "marks"]
+        required_edu_fields = ["name", "dob", "qualification", "board", "year_of_passing", "school_name", "stream", "marks_type", "marks", "document_type"]
         missing_fields = [f for f in required_edu_fields if f not in result]
         if missing_fields:
             logger.warning(f"[EDU-LLM] Missing fields in LLM response: {missing_fields}")
             for field in missing_fields:
                 result[field] = None
         
-        logger.info(f"[EDU-LLM] [STEP 1] LLM returned result with keys: {list(result.keys())}")
-        logger.info(f"[EDU-LLM] [STEP 1] Raw name value: {repr(result.get('name'))} (type: {type(result.get('name')).__name__ if result.get('name') else 'NoneType'})")
-        logger.info(f"[EDU-LLM] [STEP 1] Raw dob value: {repr(result.get('dob'))} (type: {type(result.get('dob')).__name__ if result.get('dob') else 'NoneType'})")
-        
-        # Ensure name and dob fields exist in result
+        # CRITICAL: Ensure name and dob exist (even if None)
         if "name" not in result:
             logger.warning(f"[EDU-LLM] ✗ 'name' field missing from LLM response, setting to None")
             result["name"] = None
@@ -309,19 +311,32 @@ Return ONLY the JSON object (no markdown, no explanations):"""
             logger.warning(f"[EDU-LLM] ✗ 'dob' field missing from LLM response, setting to None")
             result["dob"] = None
         
-        # Normalize date format if present
-        if result.get('dob') and result['dob'].lower() != 'null' and result['dob'] != 'None':
-            original_dob = result.get('dob')
-            result['dob'] = normalize_date_format(result['dob'])
-            logger.info(f"[EDU-LLM] [STEP 2] DOB normalized: {repr(original_dob)} -> {repr(result['dob'])}")
-        elif result.get('dob'):
-            logger.warning(f"[EDU-LLM] [STEP 2] ✗ No DOB found in educational document")
-            result['dob'] = None
+        # Clean and normalize name
+        name_value = result.get("name")
+        if name_value and isinstance(name_value, str):
+            name_value = name_value.strip()
+            if name_value.lower() in ["null", "none", "", "n/a"]:
+                result["name"] = None
+                logger.warning(f"[EDU-LLM] Name is empty/null string, setting to None")
+            else:
+                result["name"] = name_value
+                logger.info(f"[EDU-LLM] ✓ Name extracted: {repr(result['name'])}")
+        else:
+            logger.warning(f"[EDU-LLM] Name field is None or not string")
         
-        # Clean up name field - remove "null" string if LLM returned it
-        if result.get('name') and (result['name'].lower() == 'null' or result['name'] == 'None'):
-            logger.warning(f"[EDU-LLM] [STEP 2] LLM returned string 'null' for name, converting to None")
-            result['name'] = None
+        # Clean and normalize DOB
+        dob_value = result.get("dob")
+        if dob_value and isinstance(dob_value, str):
+            dob_value = dob_value.strip()
+            if dob_value.lower() in ["null", "none", "", "n/a"]:
+                result["dob"] = None
+                logger.warning(f"[EDU-LLM] DOB is empty/null string, setting to None")
+            else:
+                # Normalize DOB format
+                result["dob"] = normalize_date_format(dob_value)
+                logger.info(f"[EDU-LLM] ✓ DOB extracted & normalized: {repr(result['dob'])}")
+        else:
+            logger.warning(f"[EDU-LLM] DOB field is None or not string")
         
         # Normalize qualification
         if result.get('qualification'):
@@ -331,18 +346,13 @@ Return ONLY the JSON object (no markdown, no explanations):"""
             elif 'XII' in qual or '12' in qual:
                 result['qualification'] = 'Class 12'
         
-        # Log extracted values with validation
-        logger.info(f"[EDU-LLM] [STEP 3] Extracted values after processing:")
-        logger.info(f"[EDU-LLM]          name={repr(result.get('name'))} (is_none={result.get('name') is None})")
-        logger.info(f"[EDU-LLM]          dob={repr(result.get('dob'))} (is_none={result.get('dob') is None})")
-        logger.info(f"[EDU-LLM]          qualification={result.get('qualification')}")
+        logger.info(f"[EDU-LLM] [FINAL] Educational data extracted:")
+        logger.info(f"[EDU-LLM]   name={repr(result.get('name'))}")
+        logger.info(f"[EDU-LLM]   dob={repr(result.get('dob'))}")
+        logger.info(f"[EDU-LLM]   qualification={result.get('qualification')}")
+        logger.info(f"[EDU-LLM]   board={result.get('board')}")
+        logger.info(f"[EDU-LLM]   school_name={result.get('school_name')}")
         
-        logger.info(f"[EDU-LLM] [FINAL] ✓ Educational data extracted successfully:")
-        logger.info(f"[EDU-LLM]         name={repr(result.get('name'))}")
-        logger.info(f"[EDU-LLM]         dob={repr(result.get('dob'))}")
-        logger.info(f"[EDU-LLM]         qualification={result.get('qualification')}")
-        logger.info(f"[EDU-LLM]         board={result.get('board')}")
-        logger.info(f"[EDU-LLM]         school_name={result.get('school_name')}")
         return result
     else:
         logger.error("✗ Failed to extract educational data with LLM")

@@ -1057,7 +1057,13 @@ async def process_ocr_background(worker_id: str, personal_doc_path: str, educati
                     except:
                         percentage = ""
 
+                # Extract name and dob from education_data (CRITICAL for verification)
+                extracted_name = education_data.get("name", "").strip() if education_data.get("name") else None
+                extracted_dob = education_data.get("dob", "").strip() if education_data.get("dob") else None
+                
                 logger.info(f"[Background OCR] Extracted education data:")
+                logger.info(f"  Name: {extracted_name or '(empty)'}")
+                logger.info(f"  DOB: {extracted_dob or '(empty)'}")
                 logger.info(f"  Qualification: {qualification or '(empty)'}")
                 logger.info(f"  Board: {board or '(empty)'}")
                 logger.info(f"  Stream: {stream or '(empty)'}")
@@ -1067,8 +1073,10 @@ async def process_ocr_background(worker_id: str, personal_doc_path: str, educati
                 logger.info(f"  Marks: {marks or '(empty)'}")
                 logger.info(f"  Percentage: {percentage or '(empty)'}")
 
-                # Save education data with all fields
+                # Build education record with all fields
                 education_record = {
+                    "name": extracted_name,
+                    "dob": extracted_dob,
                     "document_type": "marksheet",
                     "qualification": qualification,
                     "board": board,
@@ -1080,7 +1088,13 @@ async def process_ocr_background(worker_id: str, personal_doc_path: str, educati
                     "percentage": percentage,
                 }
 
-                success = crud.save_educational_document(worker_id, education_record)
+                # Save using the new function that preserves name, dob, and raw OCR text
+                success = crud.save_educational_document_with_llm_data(
+                    worker_id,
+                    education_record,
+                    raw_ocr_text=education_ocr_text,
+                    llm_data=education_data
+                )
                 if success:
                     education_saved_count += 1
                     logger.info(
