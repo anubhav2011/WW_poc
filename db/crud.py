@@ -1723,6 +1723,8 @@ def get_educational_documents_for_verification(worker_id: str) -> list:
         - qualification
         - extracted_name
         - extracted_dob
+        - school_name
+        - board
         - verification_status
     """
     conn = None
@@ -1730,7 +1732,7 @@ def get_educational_documents_for_verification(worker_id: str) -> list:
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("""
-        SELECT id, qualification, extracted_name, extracted_dob, verification_status
+        SELECT id, qualification, extracted_name, extracted_dob, school_name, board, verification_status
         FROM educational_documents 
         WHERE worker_id = ?
         ORDER BY id
@@ -1744,7 +1746,9 @@ def get_educational_documents_for_verification(worker_id: str) -> list:
                 "qualification": row[1],
                 "extracted_name": row[2],
                 "extracted_dob": row[3],
-                "verification_status": row[4] or 'pending'
+                "school_name": row[4],
+                "board": row[5],
+                "verification_status": row[6] or 'pending'
             })
         
         logger.info(f"Retrieved {len(documents)} educational documents for verification (worker: {worker_id})")

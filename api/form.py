@@ -76,6 +76,8 @@ async def process_ocr_background(worker_id: str, personal_doc_path: str, educati
             return result
         
         logger.info(f"✓ OCR extracted {len(personal_ocr_text)} characters from personal document")
+        logger.info(f"[RAW_OCR_PERSONAL] Complete text (first 500 chars): {personal_ocr_text[:500]}")
+        logger.info(f"[RAW_OCR_PERSONAL] Complete text length: {len(personal_ocr_text)} characters")
         
         # Pass raw OCR text to LLM for structured extraction
         personal_data = await loop.run_in_executor(None, extract_personal_data_llm, personal_ocr_text)
@@ -138,6 +140,8 @@ async def process_ocr_background(worker_id: str, personal_doc_path: str, educati
                 continue
             
             logger.info(f"  ✓ OCR extracted {len(edu_ocr_text)} characters")
+            logger.info(f"  [RAW_OCR_EDUCATION] Complete text (first 500 chars): {edu_ocr_text[:500]}")
+            logger.info(f"  [RAW_OCR_EDUCATION] Complete text length: {len(edu_ocr_text)} characters")
             
             # Pass raw OCR text to LLM for structured extraction
             edu_data = await loop.run_in_executor(None, extract_educational_data_llm, edu_ocr_text)

@@ -99,6 +99,16 @@ def call_llm_with_retry(prompt: str, system_prompt: str, max_retries: int = 3) -
             try:
                 data = json.loads(content)
                 logger.info(f"Successfully parsed JSON response: {list(data.keys())}")
+                
+                # Validate that response is a dict
+                if not isinstance(data, dict):
+                    logger.error(f"LLM response is not a dict: {type(data)}")
+                    if attempt < max_retries - 1:
+                        logger.info("Retrying LLM call...")
+                        continue
+                    else:
+                        return None
+                
                 return data
             except json.JSONDecodeError as e:
                 logger.warning(f"JSON parse error on attempt {attempt + 1}: {e}")
@@ -181,6 +191,14 @@ Return ONLY the JSON object:"""
     result = call_llm_with_retry(user_prompt, system_prompt)
     
     if result:
+        # Validate required fields exist
+        required_personal_fields = ["name", "dob", "address", "mobile"]
+        missing_fields = [f for f in required_personal_fields if f not in result]
+        if missing_fields:
+            logger.warning(f"[PERSONAL-LLM] Missing fields in LLM response: {missing_fields}")
+            for field in missing_fields:
+                result[field] = None
+        
         # Normalize date format
         if result.get('dob'):
             result['dob'] = normalize_date_format(result['dob'])
@@ -270,6 +288,14 @@ Return ONLY the JSON object (no markdown, no explanations):"""
     result = call_llm_with_retry(user_prompt, system_prompt)
     
     if result:
+        # Validate required fields exist
+        required_edu_fields = ["name", "dob", "qualification", "board", "year_of_passing", "school_name", "stream", "marks_type", "marks"]
+        missing_fields = [f for f in required_edu_fields if f not in result]
+        if missing_fields:
+            logger.warning(f"[EDU-LLM] Missing fields in LLM response: {missing_fields}")
+            for field in missing_fields:
+                result[field] = None
+        
         logger.info(f"[EDU-LLM] [STEP 1] LLM returned result with keys: {list(result.keys())}")
         logger.info(f"[EDU-LLM] [STEP 1] Raw name value: {repr(result.get('name'))} (type: {type(result.get('name')).__name__ if result.get('name') else 'NoneType'})")
         logger.info(f"[EDU-LLM] [STEP 1] Raw dob value: {repr(result.get('dob'))} (type: {type(result.get('dob')).__name__ if result.get('dob') else 'NoneType'})")
