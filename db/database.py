@@ -10,7 +10,11 @@ logger = logging.getLogger(__name__)
 # POC ONLY — NO AUTHENTICATION
 # MOBILE NUMBER IS SELF-DECLARED VIA FORM
 # Use absolute path so the same DB is used regardless of server cwd
-DB_PATH = (Path(__file__).resolve().parent.parent / "data" / "workers.db")
+try:
+    DB_PATH = (Path(__file__).resolve().parent.parent / "data" / "workers.db")
+except NameError:
+    # Handle case where __file__ is not defined
+    DB_PATH = Path("/vercel/share/v0-project/data/workers.db")
 _initializing = False
 logger.info(f"Database path: {DB_PATH}")
 
