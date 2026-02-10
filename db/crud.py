@@ -1487,14 +1487,14 @@ def save_educational_document_with_llm_data(
         
         logger.info(f"[EDU+LLM SAVE] Saving educational document with LLM data for {worker_id}")
         logger.info(f"[EDU+LLM SAVE] Education data keys: {list(education_data.keys()) if education_data else 'None'}")
-        logger.info(f"[EDU+LLM SAVE] Full education data: {education_data}")
         
         # Extract and validate name and DOB - CRITICAL FOR VERIFICATION
         extracted_name = education_data.get("name")
         extracted_dob = education_data.get("dob")
         
-        logger.info(f"[EDU+LLM SAVE] [STEP 1] Raw extracted_name from dict: {repr(extracted_name)} (type: {type(extracted_name).__name__})")
-        logger.info(f"[EDU+LLM SAVE] [STEP 1] Raw extracted_dob from dict: {repr(extracted_dob)} (type: {type(extracted_dob).__name__})")
+        logger.info(f"[EDU+LLM SAVE] [STEP 0] Raw dict values:")
+        logger.info(f"[EDU+LLM SAVE]          name from dict: {repr(extracted_name)}")
+        logger.info(f"[EDU+LLM SAVE]          dob from dict: {repr(extracted_dob)}")
         
         # Ensure we're not storing null/None, only strings or None
         if extracted_name:
@@ -1507,14 +1507,14 @@ def save_educational_document_with_llm_data(
             if not extracted_dob:
                 extracted_dob = None
         
-        logger.info(f"[EDU+LLM SAVE] [STEP 2] After string conversion & strip:")
+        logger.info(f"[EDU+LLM SAVE] [STEP 1] After string conversion & strip:")
         logger.info(f"[EDU+LLM SAVE]          extracted_name={repr(extracted_name)} (type: {type(extracted_name).__name__ if extracted_name else 'NoneType'})")
         logger.info(f"[EDU+LLM SAVE]          extracted_dob={repr(extracted_dob)} (type: {type(extracted_dob).__name__ if extracted_dob else 'NoneType'})")
         
         # Final validation
-        logger.info(f"[EDU+LLM SAVE] [STEP 3] Final null checks:")
-        logger.info(f"[EDU+LLM SAVE]          name_is_null={extracted_name is None}, name_empty={extracted_name == ''}")
-        logger.info(f"[EDU+LLM SAVE]          dob_is_null={extracted_dob is None}, dob_empty={extracted_dob == ''}")
+        logger.info(f"[EDU+LLM SAVE] [STEP 2] Final validation before INSERT:")
+        logger.info(f"[EDU+LLM SAVE]          name_will_save={extracted_name if extracted_name else None}")
+        logger.info(f"[EDU+LLM SAVE]          dob_will_save={extracted_dob if extracted_dob else None}")
         
         # Convert percentage to float if it exists
         percentage = education_data.get("percentage")

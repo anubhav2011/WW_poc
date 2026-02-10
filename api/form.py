@@ -146,10 +146,14 @@ async def process_ocr_background(worker_id: str, personal_doc_path: str, educati
                 logger.warning(f"  ✗ LLM extraction failed for educational document")
                 continue
             
-            logger.info(f"  [EXTRACTION_CHECK] LLM returned edu_data with keys: {list(edu_data.keys())}")
-            logger.info(f"  [EXTRACTION_CHECK] name field: {repr(edu_data.get('name'))} (is_none={edu_data.get('name') is None})")
-            logger.info(f"  [EXTRACTION_CHECK] dob field: {repr(edu_data.get('dob'))} (is_none={edu_data.get('dob') is None})")
-            logger.info(f"  ✓ LLM extracted: qualification={edu_data.get('qualification')}, name={edu_data.get('name')}, dob={edu_data.get('dob')}")
+            logger.info(f"  [EDU_EXTRACTION_RESULT] edu_data keys: {list(edu_data.keys())}")
+            logger.info(f"  [EDU_EXTRACTION_RESULT] name={repr(edu_data.get('name'))}, dob={repr(edu_data.get('dob'))}")
+            logger.info(f"  [EDU_EXTRACTION_RESULT] qualification={edu_data.get('qualification')}, board={edu_data.get('board')}")
+            
+            # Validate that we have the critical fields
+            has_name = edu_data.get('name') is not None and edu_data.get('name') != 'None'
+            has_dob = edu_data.get('dob') is not None and edu_data.get('dob') != 'None'
+            logger.info(f"  [EDU_EXTRACTION_RESULT] has_name={has_name}, has_dob={has_dob}")
             
             # Save educational document with LLM data
             edu_saved = crud.save_educational_document_with_llm_data(
