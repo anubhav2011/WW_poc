@@ -1489,11 +1489,23 @@ def save_educational_document_with_llm_data(
         logger.info(f"[EDU+LLM SAVE] Education data: {education_data}")
         
         # Extract and validate name and DOB - CRITICAL FOR VERIFICATION
-        extracted_name = education_data.get("name") or ""
-        extracted_dob = education_data.get("dob") or ""
+        extracted_name = education_data.get("name")
+        extracted_dob = education_data.get("dob")
         
-        logger.info(f"[EDU+LLM SAVE] Extracted name: '{extracted_name}' (empty={not extracted_name})")
-        logger.info(f"[EDU+LLM SAVE] Extracted DOB: '{extracted_dob}' (empty={not extracted_dob})")
+        # Ensure we're not storing null/None, only strings or None
+        if extracted_name:
+            extracted_name = str(extracted_name).strip()
+            if not extracted_name:
+                extracted_name = None
+        
+        if extracted_dob:
+            extracted_dob = str(extracted_dob).strip()
+            if not extracted_dob:
+                extracted_dob = None
+        
+        logger.info(f"[EDU+LLM SAVE] Raw data from LLM: name={repr(education_data.get('name'))}, dob={repr(education_data.get('dob'))}")
+        logger.info(f"[EDU+LLM SAVE] After processing: extracted_name={repr(extracted_name)}, extracted_dob={repr(extracted_dob)}")
+        logger.info(f"[EDU+LLM SAVE] Will save: name_is_null={extracted_name is None}, dob_is_null={extracted_dob is None}")
         
         # Convert percentage to float if it exists
         percentage = education_data.get("percentage")
