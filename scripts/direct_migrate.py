@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 # Use absolute path
 DB_PATH = Path("/vercel/share/v0-project/data/workers.db")
 
+# Ensure data directory exists
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+logger.info(f"Data directory: {DB_PATH.parent}")
+
 def init_migrations_table(conn):
     """Initialize the migrations tracking table if it doesn't exist."""
     cursor = conn.cursor()
@@ -48,6 +52,168 @@ def record_migration(conn, migration_name):
     )
     conn.commit()
 
+def apply_init_schema(conn):
+    """Apply the InitializeSchema migration."""
+    try:
+        cursor = conn.cursor()
+        logger.info("Applying InitializeSchema migration...")
+        
+        # Create workers table
+        logger.info("  - Creating workers table...")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS workers (
+            worker_id TEXT PRIMARY KEY,
+            first_name TEXT NOT NULL,
+            last_name TEXT NOT NULL,
+            date_of_birth TEXT,
+            mobile_number TEXT UNIQUE,
+            email TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            personal_document_path TEXT,
+            educational_document_paths TEXT
+        )
+        """)
+        
+        # Create personal_documents table
+        logger.info("  - Creating personal_documents table...")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS personal_documents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            worker_id TEXT NOT NULL,
+            document_type TEXT,
+            name TEXT,
+            date_of_birth TEXT,
+            document_path TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (worker_id) REFERENCES workers(worker_id)
+        )
+        """)
+        
+        # Create educational_documents table
+        logger.info("  - Creating educational_documents table...")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS educational_documents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            worker_id TEXT NOT NULL,
+            document_type TEXT,
+            qualification TEXT,
+            board TEXT,
+            stream TEXT,
+            year_of_passing TEXT,
+            school_name TEXT,
+            marks_type TEXT,
+            marks TEXT,
+            percentage REAL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (worker_id) REFERENCES workers(worker_id)
+        )
+        """)
+        
+        # Create experience table
+        logger.info("  - Creating experience table...")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS experience (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            worker_id TEXT NOT NULL,
+            position TEXT,
+            company TEXT,
+            start_date TEXT,
+            end_date TEXT,
+            description TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (worker_id) REFERENCES workers(worker_id)
+        )
+        """)
+        
+        # Create skills table
+        logger.info("  - Creating skills table...")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS skills (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            worker_id TEXT NOT NULL,
+            skill_name TEXT,
+            proficiency TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (worker_id) REFERENCES workers(worker_id)
+        )
+        """)
+        
+        # Create jobs table
+        logger.info("  - Creating jobs table...")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            company TEXT,
+            description TEXT,
+            requirements TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+        
+        # Create job_matches table
+        logger.info("  - Creating job_matches table...")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS job_matches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            worker_id TEXT NOT NULL,
+            job_id INTEGER NOT NULL,
+            match_score REAL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (worker_id) REFERENCES workers(worker_id),
+            FOREIGN KEY (job_id) REFERENCES jobs(id)
+        )
+        """)
+        
+        # Create cv_data table
+        logger.info("  - Creating cv_data table...")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS cv_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            worker_id TEXT NOT NULL,
+            cv_content TEXT,
+            language TEXT DEFAULT 'en',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (worker_id) REFERENCES workers(worker_id)
+        )
+        """)
+        
+        # Create triggers for updated_at
+        logger.info("  - Creating triggers...")
+        cursor.execute("""
+        CREATE TRIGGER IF NOT EXISTS workers_updated_at 
+        AFTER UPDATE ON workers
+        BEGIN
+            UPDATE workers SET updated_at = CURRENT_TIMESTAMP WHERE worker_id = NEW.worker_id;
+        END
+        """)
+        
+        conn.commit()
+        logger.info("✓ InitializeSchema migration completed successfully")
+        return True
+        
+    except Exception as e:
+        logger.error(f"✗ Error applying migration: {str(e)}", exc_info=True)
+        conn.rollback()
+        return False
+
+def add_column_if_not_exists(cursor, table_name, column_name, column_definition):
+    """Helper function to add a column if it doesn't exist."""
+    try:
+        # Check if column exists by attempting to query it
+        cursor.execute(f"PRAGMA table_info({table_name})")
+        columns = [col[1] for col in cursor.fetchall()]
+        
+        if column_name not in columns:
+            cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}")
+            logger.info(f"    ✓ Added column {column_name} to {table_name}")
+        else:
+            logger.info(f"    ⊘ Column {column_name} already exists in {table_name}")
+    except Exception as e:
+        logger.error(f"    ✗ Error adding column {column_name}: {str(e)}")
+        raise
+
 def apply_add_verification_columns(conn):
     """Apply the AddVerificationColumns migration."""
     try:
@@ -56,25 +222,34 @@ def apply_add_verification_columns(conn):
         
         # Add verification columns to workers table
         logger.info("  - Adding columns to workers table...")
-        cursor.execute("ALTER TABLE workers ADD COLUMN IF NOT EXISTS verification_status TEXT DEFAULT 'pending'")
-        cursor.execute("ALTER TABLE workers ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP DEFAULT NULL")
-        cursor.execute("ALTER TABLE workers ADD COLUMN IF NOT EXISTS verification_errors TEXT DEFAULT NULL")
-        cursor.execute("ALTER TABLE workers ADD COLUMN IF NOT EXISTS personal_extracted_name TEXT DEFAULT NULL")
-        cursor.execute("ALTER TABLE workers ADD COLUMN IF NOT EXISTS personal_extracted_dob TEXT DEFAULT NULL")
+        add_column_if_not_exists(cursor, "workers", "verification_status", "TEXT DEFAULT 'pending'")
+        add_column_if_not_exists(cursor, "workers", "verified_at", "TIMESTAMP DEFAULT NULL")
+        add_column_if_not_exists(cursor, "workers", "verification_errors", "TEXT DEFAULT NULL")
+        add_column_if_not_exists(cursor, "workers", "personal_extracted_name", "TEXT DEFAULT NULL")
+        add_column_if_not_exists(cursor, "workers", "personal_extracted_dob", "TEXT DEFAULT NULL")
         
         logger.info("  - Adding columns to educational_documents table...")
         # Add extraction and verification columns to educational_documents table
-        cursor.execute("ALTER TABLE educational_documents ADD COLUMN IF NOT EXISTS raw_ocr_text TEXT DEFAULT NULL")
-        cursor.execute("ALTER TABLE educational_documents ADD COLUMN IF NOT EXISTS llm_extracted_data TEXT DEFAULT NULL")
-        cursor.execute("ALTER TABLE educational_documents ADD COLUMN IF NOT EXISTS extracted_name TEXT DEFAULT NULL")
-        cursor.execute("ALTER TABLE educational_documents ADD COLUMN IF NOT EXISTS extracted_dob TEXT DEFAULT NULL")
-        cursor.execute("ALTER TABLE educational_documents ADD COLUMN IF NOT EXISTS verification_status TEXT DEFAULT 'pending'")
-        cursor.execute("ALTER TABLE educational_documents ADD COLUMN IF NOT EXISTS verification_errors TEXT DEFAULT NULL")
+        add_column_if_not_exists(cursor, "educational_documents", "raw_ocr_text", "TEXT DEFAULT NULL")
+        add_column_if_not_exists(cursor, "educational_documents", "llm_extracted_data", "TEXT DEFAULT NULL")
+        add_column_if_not_exists(cursor, "educational_documents", "extracted_name", "TEXT DEFAULT NULL")
+        add_column_if_not_exists(cursor, "educational_documents", "extracted_dob", "TEXT DEFAULT NULL")
+        add_column_if_not_exists(cursor, "educational_documents", "verification_status", "TEXT DEFAULT 'pending'")
+        add_column_if_not_exists(cursor, "educational_documents", "verification_errors", "TEXT DEFAULT NULL")
         
         # Create indexes for faster verification queries
         logger.info("  - Creating indexes...")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_workers_verification_status ON workers(verification_status)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_educational_documents_verification ON educational_documents(worker_id, verification_status)")
+        try:
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_workers_verification_status ON workers(verification_status)")
+            logger.info("    ✓ Created index idx_workers_verification_status")
+        except Exception as e:
+            logger.info(f"    ⊘ Index idx_workers_verification_status already exists")
+        
+        try:
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_educational_documents_verification ON educational_documents(worker_id, verification_status)")
+            logger.info("    ✓ Created index idx_educational_documents_verification")
+        except Exception as e:
+            logger.info(f"    ⊘ Index idx_educational_documents_verification already exists")
         
         conn.commit()
         logger.info("✓ AddVerificationColumns migration completed successfully")
@@ -100,8 +275,9 @@ def main():
         # Initialize migrations table
         init_migrations_table(conn)
         
-        # List of migrations to apply
+        # List of migrations to apply (in order)
         migrations = [
+            ("InitializeSchema", apply_init_schema),
             ("AddVerificationColumns", apply_add_verification_columns),
         ]
         
