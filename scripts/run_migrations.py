@@ -1,12 +1,13 @@
+#!/usr/bin/env python3
 """
-Migration runner - Execute all pending migrations.
-Usage: python run_migrations.py [--status] [--rollback]
+Database Migration Runner
+Execute all pending migrations automatically
 """
 
 import sys
-import sqlite3
 import logging
 from pathlib import Path
+from datetime import datetime
 
 # Setup logging
 logging.basicConfig(
@@ -15,118 +16,166 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Add scripts directory to path to import migrations
-try:
-    SCRIPTS_DIR = Path(__file__).resolve().parent
-except NameError:
-    # When __file__ is not defined (in some execution environments)
-    # Look for scripts directory from current directory
-    cwd = Path.cwd()
-    if (cwd / "scripts").exists():
-        SCRIPTS_DIR = cwd / "scripts"
-    else:
-        SCRIPTS_DIR = cwd
-    
-sys.path.insert(0, str(SCRIPTS_DIR))
-logger.info(f"Scripts directory: {SCRIPTS_DIR}")
+# Add project root to path
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(Path(__file__).parent))
 
 from migration_base import MigrationRunner
-from importlib import import_module
+from _001_init_schema import InitializeSchema
+from _002_add_verification_columns import AddVerificationColumns
 
-# Import migrations dynamically
-def load_migration(module_name, class_name):
-    """Load migration class from module."""
-    module = import_module(module_name)
-    return getattr(module, class_name)
-
-# Get database path (same as in main project)
-DB_PATH = SCRIPTS_DIR.parent / "data" / "workers.db"
+# Database path
+DB_PATH = PROJECT_ROOT / "data" / "workers.db"
 
 
 def run_all_migrations():
-    """Run all migrations in order."""
+    """Run all pending migrations in order."""
     logger.info("=" * 60)
-    logger.info("Starting Database Migrations")
+    logger.info("Database Migration Runner")
     logger.info("=" * 60)
     logger.info(f"Database: {DB_PATH}")
+    logger.info(f"Timestamp: {datetime.now().isoformat()}")
+    logger.info("=" * 60)
     
     runner = MigrationRunner(str(DB_PATH))
     
-    # Define migrations in order
-    InitSchema = load_migration("_001_init_schema", "InitializeSchema")
-    AddVerification = load_migration("_002_add_verification_columns", "AddVerificationColumns")
+    # Define all migrations in order
     migrations = [
-        InitSchema(),
-        AddVerification(),
+        InitializeSchema(),
+        AddVerificationColumns(),
     ]
     
-    # Run migrations
-    success = runner.run_migrations(migrations)
+    logger.info(f"Total migrations to process: {len(migrations)}")
+    logger.info("")
     
-    if success:
-        print("\n" + "=" * 60)
-        print("Migrations Status:")
-        print("=" * 60)
-        runner.status()
-        print("=" * 60)
+    successful = 0
+    failed = 0
     
-    return success
+    for migration in migrations:
+        logger.info(f"Processing: {migration.name}")
+        if runner.run_migration(migration):
+            successful += 1
+        else:
+            failed += 1
+        logger.info("")
+    
+    # Print summary
+    logger.info("=" * 60)
+    logger.info("Migration Summary")
+    logger.info("=" * 60)
+    logger.info(f"Total migrations: {len(migrations)}")
+    logger.info(f"Successful: {successful}")
+    logger.info(f"Failed: {failed}")
+    logger.info("=" * 60)
+    
+    # Show applied migrations
+    applied = runner.get_applied_migrations()
+    logger.info(f"\nApplied migrations ({len(applied)}):")
+    for migration_name in applied:
+        logger.info(f"  ✓ {migration_name}")
+    logger.info("")
+    
+    if failed == 0:
+        logger.info("✓ All migrations completed successfully!")
+        return True
+    else:
+        logger.error(f"✗ {failed} migration(s) failed")
+        return False
 
 
 def show_status():
     """Show current migration status."""
-    logger.info(f"Database: {DB_PATH}")
+    logger.info("=" * 60)
+    logger.info("Migration Status")
+    logger.info("=" * 60)
+    
     runner = MigrationRunner(str(DB_PATH))
-    runner.status()
+    status = runner.get_migration_status()
+    
+    logger.info(f"Total applied migrations: {status['total']}")
+    logger.info("")
+    
+    if status['migrations']:
+        logger.info("Applied Migrations:")
+        for migration in status['migrations']:
+            logger.info(f"  ✓ {migration['name']}")
+            logger.info(f"    Applied at: {migration['applied_at']}")
+            logger.info(f"    Status: {migration['status']}")
+    else:
+        logger.info("No migrations applied yet")
+    
+    logger.info("=" * 60)
 
 
 def rollback_last():
     """Rollback the last migration (use with caution)."""
+    logger.warning("=" * 60)
     logger.warning("ROLLBACK MODE - This will undo the last migration!")
-    runner = MigrationRunner(str(DB_PATH))
+    logger.warning("=" * 60)
     
+    runner = MigrationRunner(str(DB_PATH))
     applied = runner.get_applied_migrations()
+    
     if not applied:
         logger.warning("No migrations to rollback")
-        return
+        return False
     
     last_migration_name = applied[-1]
     logger.warning(f"Rolling back: {last_migration_name}")
     
-    # Get the migration class dynamically
-    if last_migration_name == "InitializeSchema":
-        InitSchema = load_migration("_001_init_schema", "InitializeSchema")
-        migration = InitSchema()
-    elif last_migration_name == "AddVerificationColumns":
-        AddVerification = load_migration("_002_add_verification_columns", "AddVerificationColumns")
-        migration = AddVerification()
-    else:
+    # Map migration names to classes
+    migration_map = {
+        "InitializeSchema": InitializeSchema(),
+        "AddVerificationColumns": AddVerificationColumns(),
+    }
+    
+    if last_migration_name not in migration_map:
         logger.error(f"Unknown migration: {last_migration_name}")
         return False
     
-    conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
-    try:
-        if migration.down(conn):
-            cursor = conn.cursor()
-            cursor.execute(f"DELETE FROM migrations WHERE migration_name = ?", (last_migration_name,))
-            conn.commit()
-            logger.info(f"✓ Rollback successful: {last_migration_name}")
-            return True
+    migration = migration_map[last_migration_name]
+    success = runner.rollback_migration(migration)
+    
+    logger.warning("=" * 60)
+    if success:
+        logger.warning("✓ Rollback completed")
+    else:
+        logger.error("✗ Rollback failed")
+    logger.warning("=" * 60)
+    
+    return success
+
+
+def main():
+    """Main entry point."""
+    if len(sys.argv) > 1:
+        command = sys.argv[1].lower()
+        
+        if command == "--status":
+            show_status()
+        elif command == "--rollback":
+            rollback_last()
+        elif command == "--help":
+            print("Database Migration Runner")
+            print("")
+            print("Usage: python run_migrations.py [COMMAND]")
+            print("")
+            print("Commands:")
+            print("  (none)          Run all pending migrations (default)")
+            print("  --status        Show current migration status")
+            print("  --rollback      Rollback the last migration (use with caution)")
+            print("  --help          Show this help message")
+            print("")
+            print(f"Database path: {DB_PATH}")
         else:
-            logger.error(f"Rollback failed: {last_migration_name}")
-            return False
-    finally:
-        conn.close()
+            logger.error(f"Unknown command: {command}")
+            print("Use --help for usage information")
+    else:
+        # Default: run all migrations
+        success = run_all_migrations()
+        sys.exit(0 if success else 1)
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        if sys.argv[1] == "--status":
-            show_status()
-        elif sys.argv[1] == "--rollback":
-            rollback_last()
-        else:
-            print("Usage: python run_migrations.py [--status] [--rollback]")
-    else:
-        success = run_all_migrations()
-        sys.exit(0 if success else 1)
+    main()

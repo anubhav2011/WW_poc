@@ -1,92 +1,66 @@
 """
-Migration 001: Initialize database schema.
-Creates all initial tables for the worker verification POC system.
+Migration: Initialize Database Schema
+Purpose: Create all required tables for the application
+Date: 2026-02-10
 """
 
+import sys
 import sqlite3
 import logging
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
 from migration_base import Migration
 
 logger = logging.getLogger(__name__)
 
 
 class InitializeSchema(Migration):
-    """Initialize all core database tables."""
+    """Initialize all database tables."""
     
-    def up(self, conn: sqlite3.Connection) -> bool:
-        """Create all initial tables."""
-        cursor = conn.cursor()
-        
+    name = "InitializeSchema"
+    description = "Create all required database tables"
+    
+    def up(self, connection: sqlite3.Connection) -> bool:
+        """Apply the migration - create all tables."""
         try:
-            # Workers table
-            logger.info("Creating workers table...")
+            cursor = connection.cursor()
+            logger.info("[InitializeSchema] Starting schema initialization...")
+            
+            # Create workers table
+            logger.info("[InitializeSchema] Creating workers table...")
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS workers (
                 worker_id TEXT PRIMARY KEY,
-                mobile_number TEXT NOT NULL,
-                name TEXT,
-                dob TEXT,
-                address TEXT,
-                personal_document_path TEXT,
-                educational_document_paths TEXT,
-                video_url TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-            """)
-            
-            # Work experience table
-            logger.info("Creating work_experience table...")
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS work_experience (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                worker_id TEXT NOT NULL,
-                primary_skill TEXT,
-                experience_years INTEGER,
-                skills TEXT,
-                preferred_location TEXT,
-                current_location TEXT,
-                availability TEXT,
-                workplaces TEXT,
-                total_experience_duration INTEGER,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (worker_id) REFERENCES workers(worker_id)
-            )
-            """)
-            
-            # Voice call sessions table
-            logger.info("Creating voice_sessions table...")
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS voice_sessions (
-                call_id TEXT PRIMARY KEY,
-                worker_id TEXT,
-                phone_number TEXT,
-                status TEXT DEFAULT 'initiated',
-                current_step INTEGER DEFAULT 0,
-                responses_json TEXT,
-                transcript TEXT,
-                experience_json TEXT,
-                exp_ready BOOLEAN DEFAULT 0,
+                first_name TEXT NOT NULL,
+                last_name TEXT NOT NULL,
+                date_of_birth TEXT,
+                mobile_number TEXT UNIQUE,
+                email TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                personal_document_path TEXT,
+                educational_document_paths TEXT
+            )
+            """)
+            
+            # Create personal_documents table
+            logger.info("[InitializeSchema] Creating personal_documents table...")
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS personal_documents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                worker_id TEXT NOT NULL,
+                document_type TEXT,
+                name TEXT,
+                date_of_birth TEXT,
+                document_path TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (worker_id) REFERENCES workers(worker_id)
             )
             """)
             
-            # Job listings table
-            logger.info("Creating jobs table...")
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS jobs (
-                job_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL,
-                description TEXT,
-                required_skills TEXT,
-                location TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-            """)
-            
-            # Educational documents table
-            logger.info("Creating educational_documents table...")
+            # Create educational_documents table
+            logger.info("[InitializeSchema] Creating educational_documents table...")
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS educational_documents (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -105,98 +79,116 @@ class InitializeSchema(Migration):
             )
             """)
             
-            # Experience conversation sessions table
-            logger.info("Creating experience_sessions table...")
+            # Create experience table
+            logger.info("[InitializeSchema] Creating experience table...")
             cursor.execute("""
-            CREATE TABLE IF NOT EXISTS experience_sessions (
-                session_id TEXT PRIMARY KEY,
-                worker_id TEXT NOT NULL,
-                current_question INTEGER DEFAULT 0,
-                raw_conversation TEXT,
-                structured_data TEXT,
-                status TEXT DEFAULT 'active',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (worker_id) REFERENCES workers(worker_id)
-            )
-            """)
-            
-            # Pending OCR results table
-            logger.info("Creating pending_ocr_results table...")
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS pending_ocr_results (
-                worker_id TEXT PRIMARY KEY,
-                personal_document_path TEXT,
-                educational_document_path TEXT,
-                personal_data_json TEXT,
-                education_data_json TEXT,
-                status TEXT DEFAULT 'pending',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (worker_id) REFERENCES workers(worker_id)
-            )
-            """)
-            
-            # CV status table
-            logger.info("Creating cv_status table...")
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS cv_status (
+            CREATE TABLE IF NOT EXISTS experience (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                worker_id TEXT UNIQUE NOT NULL,
-                has_cv BOOLEAN DEFAULT 0,
-                cv_generated_at TIMESTAMP,
+                worker_id TEXT NOT NULL,
+                position TEXT,
+                company TEXT,
+                start_date TEXT,
+                end_date TEXT,
+                description TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (worker_id) REFERENCES workers(worker_id)
             )
             """)
             
-            # Create trigger for auto-update timestamp
-            logger.info("Creating trigger for cv_status timestamp...")
+            # Create skills table
+            logger.info("[InitializeSchema] Creating skills table...")
             cursor.execute("""
-            CREATE TRIGGER IF NOT EXISTS update_cv_status_timestamp 
-            AFTER UPDATE ON cv_status
+            CREATE TABLE IF NOT EXISTS skills (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                worker_id TEXT NOT NULL,
+                skill_name TEXT,
+                proficiency TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (worker_id) REFERENCES workers(worker_id)
+            )
+            """)
+            
+            # Create jobs table
+            logger.info("[InitializeSchema] Creating jobs table...")
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                company TEXT,
+                description TEXT,
+                requirements TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """)
+            
+            # Create job_matches table
+            logger.info("[InitializeSchema] Creating job_matches table...")
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS job_matches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                worker_id TEXT NOT NULL,
+                job_id INTEGER NOT NULL,
+                match_score REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (worker_id) REFERENCES workers(worker_id),
+                FOREIGN KEY (job_id) REFERENCES jobs(id)
+            )
+            """)
+            
+            # Create cv_data table
+            logger.info("[InitializeSchema] Creating cv_data table...")
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS cv_data (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                worker_id TEXT NOT NULL,
+                cv_content TEXT,
+                language TEXT DEFAULT 'en',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (worker_id) REFERENCES workers(worker_id)
+            )
+            """)
+            
+            # Create triggers for updated_at
+            logger.info("[InitializeSchema] Creating triggers...")
+            cursor.execute("""
+            CREATE TRIGGER IF NOT EXISTS workers_updated_at 
+            AFTER UPDATE ON workers
             BEGIN
-                UPDATE cv_status SET updated_at = CURRENT_TIMESTAMP WHERE worker_id = NEW.worker_id;
+                UPDATE workers SET updated_at = CURRENT_TIMESTAMP WHERE worker_id = NEW.worker_id;
             END
             """)
             
-            conn.commit()
-            logger.info("✓ Schema initialization complete")
+            connection.commit()
+            logger.info("[InitializeSchema] ✓ Schema initialization completed successfully")
             return True
             
         except Exception as e:
-            logger.error(f"Error in InitializeSchema.up(): {str(e)}", exc_info=True)
-            conn.rollback()
+            logger.error(f"[InitializeSchema] ✗ Error initializing schema: {str(e)}", exc_info=True)
+            connection.rollback()
             return False
     
-    def down(self, conn: sqlite3.Connection) -> bool:
-        """Drop all tables (rollback)."""
-        cursor = conn.cursor()
-        tables = [
-            "cv_status",
-            "pending_ocr_results",
-            "experience_sessions",
-            "educational_documents",
-            "jobs",
-            "voice_sessions",
-            "work_experience",
-            "workers"
-        ]
-        
+    def down(self, connection: sqlite3.Connection) -> bool:
+        """Rollback the migration - drop all tables."""
         try:
-            # Drop trigger first
-            cursor.execute("DROP TRIGGER IF EXISTS update_cv_status_timestamp")
+            cursor = connection.cursor()
+            logger.warning("[InitializeSchema] ROLLBACK: Dropping all tables...")
             
             # Drop tables in reverse order
-            for table in tables:
-                cursor.execute(f"DROP TABLE IF EXISTS {table}")
+            cursor.execute("DROP TABLE IF EXISTS migrations")
+            cursor.execute("DROP TABLE IF EXISTS job_matches")
+            cursor.execute("DROP TABLE IF EXISTS jobs")
+            cursor.execute("DROP TABLE IF EXISTS cv_data")
+            cursor.execute("DROP TABLE IF EXISTS skills")
+            cursor.execute("DROP TABLE IF EXISTS experience")
+            cursor.execute("DROP TABLE IF EXISTS educational_documents")
+            cursor.execute("DROP TABLE IF EXISTS personal_documents")
+            cursor.execute("DROP TABLE IF EXISTS workers")
             
-            conn.commit()
-            logger.info("✓ Schema rolled back")
+            connection.commit()
+            logger.warning("[InitializeSchema] ✓ All tables dropped")
             return True
             
         except Exception as e:
-            logger.error(f"Error in InitializeSchema.down(): {str(e)}", exc_info=True)
-            conn.rollback()
+            logger.error(f"[InitializeSchema] ✗ Error rolling back schema: {str(e)}", exc_info=True)
+            connection.rollback()
             return False
