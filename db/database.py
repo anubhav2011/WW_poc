@@ -251,6 +251,51 @@ def init_db():
         END
         """)
 
+        # Add verification columns to workers table for document matching
+        logger.info("Adding verification columns to workers table...")
+        for column_name, column_type in [
+            ("verification_status", "TEXT DEFAULT 'pending'"),
+            ("verified_at", "TIMESTAMP DEFAULT NULL"),
+            ("verification_errors", "TEXT DEFAULT NULL"),
+            ("personal_extracted_name", "TEXT DEFAULT NULL"),
+            ("personal_extracted_dob", "TEXT DEFAULT NULL")
+        ]:
+            try:
+                cursor.execute(f"ALTER TABLE workers ADD COLUMN {column_name} {column_type}")
+                logger.info(f"Added column {column_name} to workers table")
+            except sqlite3.OperationalError:
+                pass  # column already exists
+
+        # Add extraction and verification columns to educational_documents table
+        logger.info("Adding verification columns to educational_documents table...")
+        for column_name, column_type in [
+            ("raw_ocr_text", "TEXT DEFAULT NULL"),
+            ("llm_extracted_data", "TEXT DEFAULT NULL"),
+            ("extracted_name", "TEXT DEFAULT NULL"),
+            ("extracted_dob", "TEXT DEFAULT NULL"),
+            ("verification_status", "TEXT DEFAULT 'pending'"),
+            ("verification_errors", "TEXT DEFAULT NULL")
+        ]:
+            try:
+                cursor.execute(f"ALTER TABLE educational_documents ADD COLUMN {column_name} {column_type}")
+                logger.info(f"Added column {column_name} to educational_documents table")
+            except sqlite3.OperationalError:
+                pass  # column already exists
+
+        # Create indexes for faster verification queries
+        logger.info("Creating verification indexes...")
+        try:
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_workers_verification_status ON workers(verification_status)")
+            logger.info("Created index idx_workers_verification_status")
+        except sqlite3.OperationalError:
+            pass  # index already exists
+
+        try:
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_educational_documents_verification ON educational_documents(worker_id, verification_status)")
+            logger.info("Created index idx_educational_documents_verification")
+        except sqlite3.OperationalError:
+            pass  # index already exists
+
         conn.commit()
         logger.info("Database initialized successfully!")
     except Exception as e:
