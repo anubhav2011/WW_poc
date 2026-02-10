@@ -820,18 +820,35 @@ async def process_ocr_background(worker_id: str, personal_doc_path: str, educati
 
         logger.info(f"[Background OCR] Extracted {len(personal_ocr_text)} characters from personal document")
 
-        # Extract structured personal data
-        personal_data = await loop.run_in_executor(None, clean_ocr_extraction, personal_ocr_text)
+        # Extract structured personal data using LLM (NEW: Uses OpenAI GPT for structured extraction)
+        logger.info(f"[Background OCR] Passing OCR text to LLM for structured extraction...")
+        personal_data = await loop.run_in_executor(None, extract_personal_data_llm, personal_ocr_text)
 
         if not personal_data:
-            logger.error(f"[Background OCR] Failed to parse personal data from OCR text")
-            return _ocr_result(False, False, 0)
+            logger.error(f"[Background OCR] Failed to extract personal data with LLM")
+            # Fallback to old cleaner method
+            logger.warning(f"[Background OCR] Attempting fallback with OCR cleaner...")
+            personal_data = await loop.run_in_executor(None, clean_ocr_extraction, personal_ocr_text)
+            
+            if not personal_data:
+                logger.error(f"[Background OCR] Fallback also failed to parse personal data from OCR text")
+                return _ocr_result(False, False, 0)
 
         # Extract and validate all required personal fields (normalize name to strip OCR quote artifacts)
         name = _normalize_name(personal_data.get("name") or "")
         dob = (personal_data.get("dob") or "").strip()
         address = (personal_data.get("address") or "").strip()
         personal_has_data = bool(name or dob or address)
+        
+        # Save raw OCR text and extracted data to database for verification
+        try:
+            crud.update_worker_ocr_data(
+                worker_id,
+                raw_ocr_text=personal_ocr_text,
+                llm_extracted_data=json.dumps(personal_data)
+            )
+        except Exception as e:
+            logger.warning(f"[Background OCR] Could not save OCR/LLM data to database: {e}")
 
         logger.info(f"[Background OCR] Extracted personal data:")
         logger.info(f"  Name: {name[:50] if name else '(empty)'}")
@@ -916,14 +933,23 @@ async def process_ocr_background(worker_id: str, personal_doc_path: str, educati
                 logger.info(
                     f"[Background OCR] Extracted {len(education_ocr_text)} characters from educational document")
 
-                # Extract structured education data
+                # Extract structured education data using LLM (NEW: Uses OpenAI GPT for structured extraction)
+                logger.info(f"[Background OCR] Passing educational OCR text to LLM for structured extraction...")
                 education_data = await loop.run_in_executor(
-                    None, clean_education_ocr_extraction, education_ocr_text
+                    None, extract_educational_data_llm, education_ocr_text
                 )
 
                 if not education_data:
-                    logger.warning(f"[Background OCR] Failed to parse education data from OCR text, skipping...")
-                    continue
+                    logger.warning(f"[Background OCR] Failed to extract educational data with LLM")
+                    # Fallback to old cleaner method
+                    logger.warning(f"[Background OCR] Attempting fallback with education OCR cleaner...")
+                    education_data = await loop.run_in_executor(
+                        None, clean_education_ocr_extraction, education_ocr_text
+                    )
+                    
+                    if not education_data:
+                        logger.warning(f"[Background OCR] Fallback also failed to parse education data from OCR text, skipping...")
+                        continue
 
                 # Extract and validate all required education fields
                 qualification = (education_data.get("qualification") or "").strip()

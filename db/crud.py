@@ -84,6 +84,53 @@ def update_worker_data(worker_id: str, name: str, dob: str, address: str) -> boo
             conn.close()
 
 
+def update_worker_ocr_data(worker_id: str, raw_ocr_text: str = None, llm_extracted_data: str = None) -> bool:
+    """Update worker with raw OCR text and LLM extracted data for personal document"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        updates = []
+        params = []
+        
+        if raw_ocr_text is not None:
+            updates.append("raw_ocr_text = ?")
+            params.append(raw_ocr_text)
+        
+        if llm_extracted_data is not None:
+            updates.append("llm_extracted_data = ?")
+            params.append(llm_extracted_data)
+        
+        if not updates:
+            return True  # Nothing to update
+        
+        params.append(worker_id)
+        
+        query = f"""
+        UPDATE workers 
+        SET {', '.join(updates)}
+        WHERE worker_id = ?
+        """
+        
+        cursor.execute(query, params)
+        conn.commit()
+        
+        if cursor.rowcount > 0:
+            logger.info(f"Updated OCR data for worker {worker_id}")
+            return True
+        else:
+            logger.warning(f"No worker found to update OCR data for {worker_id}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Error updating worker OCR data {worker_id}: {str(e)}", exc_info=True)
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def get_worker(worker_id: str) -> dict:
     """Get worker data"""
     conn = None
@@ -1569,7 +1616,8 @@ def get_worker_extraction_status(worker_id: str) -> dict:
         FROM educational_documents 
         WHERE worker_id = ? AND extracted_name IS NOT NULL AND extracted_name != ''
         """, (worker_id,))
-        edu_count = cursor.fetchone()[0] if cursor.fetchone() else 0
+        row = cursor.fetchone()
+        edu_count = row[0] if row else 0
         
         result = {
             "personal_extracted": personal_extracted,

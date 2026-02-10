@@ -267,14 +267,36 @@ def extract_text_from_pdf(pdf_path: str) -> str:
         images = convert_from_path(pdf_path, first_page=1, last_page=1, dpi=300)
         if images:
             import tempfile
-            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
-                images[0].save(tmp_file.name, 'PNG')
+            import time
+            
+            # Create temp file that persists after context manager
+            tmp_file = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+            tmp_path = tmp_file.name
+            tmp_file.close()
+            
+            try:
+                # Save image to temp file
+                images[0].save(tmp_path, 'PNG')
+                
+                # Add small delay to ensure file is written and released
+                time.sleep(0.1)
+                
                 # Use image OCR extraction
-                ocr_text = extract_text_from_image(tmp_file.name)
-                os.unlink(tmp_file.name)  # Clean up temp file
+                ocr_text = extract_text_from_image(tmp_path)
+                
                 if ocr_text and len(ocr_text.strip()) > 10:
                     logger.info(f"OCR on PDF first page: Extracted {len(ocr_text)} characters")
                     return ocr_text.strip()
+            finally:
+                # Clean up temp file with retry logic
+                try:
+                    if os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
+                except PermissionError:
+                    logger.warning(f"Could not immediately delete temp file {tmp_path}, will be cleaned by OS")
+                except Exception as e:
+                    logger.warning(f"Error deleting temp file {tmp_path}: {e}")
+                    
     except ImportError:
         logger.warning("pdf2image not available. For scanned PDFs, install: pip install pdf2image poppler")
     except Exception as e:
