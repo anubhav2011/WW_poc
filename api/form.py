@@ -715,6 +715,11 @@ async def get_worker_data(worker_id: str):
             "verified_at": worker_dict.get("verified_at")
         }
         
+        # Log exp_ready value just before including in response
+        logger.info(f"[RESPONSE] Building response with exp_ready value:")
+        logger.info(f"[RESPONSE]   - exp_ready: {exp_ready} (type: {type(exp_ready).__name__})")
+        logger.info(f"[RESPONSE]   - will be returned as: {bool(exp_ready)}")
+        
         response_data = {
             "status": "success",
             "worker": WorkerData.model_validate(worker_for_response).model_dump(),
@@ -723,7 +728,7 @@ async def get_worker_data(worker_id: str):
             "has_cv": has_cv,
             "ocr_status": ocr_status,
             "message": message,
-            "exp_ready": exp_ready,  # FLAG-BASED FLOW: Include exp_ready flag
+            "exp_ready": bool(exp_ready),  # FLAG-BASED FLOW: Explicitly cast to boolean for JSON response
         }
         
         # Add verification information
@@ -1598,7 +1603,7 @@ async def trigger_ocr_and_voice(worker_id: str, personal_doc_path: str, educatio
         logger.info("=" * 80)
         logger.info("✓ OCR PROCESSING COMPLETED SUCCESSFULLY")
         logger.info(f"  Worker ID: {worker_id}")
-        logger.info(f"  Personal document processed: ✓")
+        logger.info(f"  Personal document processed: ���")
         logger.info(f"  Educational document processed: {'✓' if educational_doc_path else '✗ (not provided)'}")
         logger.info(f"  Voice call initiated: {'✓' if voice_call_success else '✗ (check logs for details)'}")
         logger.info("=" * 80)
