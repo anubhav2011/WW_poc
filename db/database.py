@@ -129,7 +129,8 @@ def init_db():
             ("current_location", "TEXT"),
             ("availability", "TEXT"),
             ("workplaces", "TEXT"),  # JSON array of workplace objects
-            ("total_experience_duration", "INTEGER")  # Total duration in months across all workplaces
+            ("total_experience_duration", "INTEGER"),  # Total duration in months across all workplaces
+            ("experience_years_float", "REAL")  # Decimal years of experience (e.g., 2.5 for 2 years 6 months)
         ]:
             try:
                 cursor.execute(f"ALTER TABLE work_experience ADD COLUMN {column_name} {column_type}")

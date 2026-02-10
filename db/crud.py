@@ -483,14 +483,17 @@ def save_experience(worker_id: str, experience_data: dict) -> bool:
         # Calculate total experience duration from all workplaces
         total_duration_months = calculate_total_experience_duration(workplaces)
         
-        # If workplaces exist with durations, override experience_years with calculated total
+        # Calculate float years for precise storage (e.g., 2.5 years instead of 2)
+        experience_years_float = None
         if workplaces and total_duration_months > 0:
-            calculated_years = int(total_duration_months / 12)
-            logger.info(f"[EXPERIENCE] Overriding experience_years: {experience_years} → {calculated_years} (from workplaces)")
-            experience_years = calculated_years
+            experience_years_float = round(total_duration_months / 12.0, 1)  # Round to 1 decimal place
+            experience_years_int = int(total_duration_months / 12)
+            logger.info(f"[EXPERIENCE] Calculated experience: {experience_years_float} years ({total_duration_months} months)")
+            logger.info(f"[EXPERIENCE] Overriding experience_years: {experience_years} → {experience_years_int} (integer), {experience_years_float} (float)")
+            experience_years = experience_years_int  # Keep integer for backward compatibility
         
         logger.info(
-            f"[EXPERIENCE] Saving experience for {worker_id}: job_title={job_title}, years={experience_years}, workplaces={len(workplaces)}, total_months={total_duration_months}")
+            f"[EXPERIENCE] Saving experience for {worker_id}: job_title={job_title}, years={experience_years}, years_float={experience_years_float}, workplaces={len(workplaces)}, total_months={total_duration_months}")
 
         # Check if experience already exists - update instead of insert
         cursor.execute("SELECT id FROM work_experience WHERE worker_id = ? ORDER BY created_at DESC LIMIT 1",
@@ -498,12 +501,12 @@ def save_experience(worker_id: str, experience_data: dict) -> bool:
         existing = cursor.fetchone()
 
         if existing:
-            # Update existing experience - include new fields if available
-            # NEW: Update with comprehensive fields including total_experience_duration
+            # Update existing experience with float years
             cursor.execute("""
             UPDATE work_experience 
             SET primary_skill = ?, experience_years = ?, skills = ?, preferred_location = ?,
-                current_location = ?, availability = ?, workplaces = ?, total_experience_duration = ?
+                current_location = ?, availability = ?, workplaces = ?, total_experience_duration = ?,
+                experience_years_float = ?
             WHERE worker_id = ? AND id = ?
             """, (
                 primary_skill,
@@ -514,18 +517,18 @@ def save_experience(worker_id: str, experience_data: dict) -> bool:
                 availability if availability and availability != "Not specified" else None,
                 workplaces_json,
                 total_duration_months,
+                experience_years_float,
                 worker_id,
                 existing["id"]
             ))
             logger.info(
-                f"[EXPERIENCE] Experience updated for {worker_id}: {total_duration_months} months, {len(workplaces)} workplaces")
+                f"[EXPERIENCE] Experience updated for {worker_id}: {experience_years_float} years ({total_duration_months} months), {len(workplaces)} workplaces")
         else:
-            # Insert new experience - include new fields
-            # NEW: Insert with comprehensive fields including total_experience_duration
+            # Insert new experience with float years
             cursor.execute("""
             INSERT INTO work_experience 
-            (worker_id, primary_skill, experience_years, skills, preferred_location, current_location, availability, workplaces, total_experience_duration)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (worker_id, primary_skill, experience_years, skills, preferred_location, current_location, availability, workplaces, total_experience_duration, experience_years_float)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 worker_id,
                 primary_skill,
@@ -535,10 +538,11 @@ def save_experience(worker_id: str, experience_data: dict) -> bool:
                 current_location if current_location else None,
                 availability if availability and availability != "Not specified" else None,
                 workplaces_json,
-                total_duration_months
+                total_duration_months,
+                experience_years_float
             ))
             logger.info(
-                f"[EXPERIENCE] Experience saved for {worker_id}: {total_duration_months} months, {len(workplaces)} workplaces")
+                f"[EXPERIENCE] Experience saved for {worker_id}: {experience_years_float} years ({total_duration_months} months), {len(workplaces)} workplaces")
 
         conn.commit()
         return True
@@ -552,8 +556,9 @@ def save_experience(worker_id: str, experience_data: dict) -> bool:
 
 def get_experience(worker_id: str) -> dict:
     """
-    Get work experience for worker. Also tries to get tools from voice session's experience_json if available.
-    NEW: Returns workplaces array, current_location, availability if available.
+    Get work experience for a worker.
+    Loads experience and returns details, or None if not found.
+    Returns experience_years_float if available, otherwise falls back to experience_years.
     """
     conn = None
     try:
@@ -562,60 +567,39 @@ def get_experience(worker_id: str) -> dict:
         cursor.execute("SELECT * FROM work_experience WHERE worker_id = ? ORDER BY created_at DESC LIMIT 1",
                        (worker_id,))
         row = cursor.fetchone()
+
         if row:
-            data = dict(row)
-            if data.get("skills"):
+            experience = dict(row)
+            # Parse JSON strings
+            if experience.get("skills"):
                 try:
-                    data["skills"] = json.loads(data["skills"])
+                    experience["skills"] = json.loads(experience["skills"])
                 except (TypeError, json.JSONDecodeError):
-                    data["skills"] = []
-
-            # NEW: Parse workplaces JSON if available
-            if data.get("workplaces"):
-                try:
-                    data["workplaces"] = json.loads(data["workplaces"])
-                    if not isinstance(data["workplaces"], list):
-                        data["workplaces"] = []
-                except (TypeError, json.JSONDecodeError):
-                    data["workplaces"] = []
+                    experience["skills"] = []
             else:
-                data["workplaces"] = []
+                experience["skills"] = []
 
-            # Try to get tools from voice session's experience_json (where tools are stored separately)
-            # This helps retrieve tools even if they were combined with skills in work_experience table
-            if not data.get("tools"):
-                cursor.execute("""
-                    SELECT experience_json
-                    FROM voice_sessions
-                    WHERE worker_id = ? AND experience_json IS NOT NULL AND experience_json != ''
-                    ORDER BY updated_at DESC
-                    LIMIT 1
-                """, (worker_id,))
-                exp_row = cursor.fetchone()
-                if exp_row and exp_row[0]:
-                    try:
-                        exp_data = json.loads(exp_row[0])
-                        if exp_data.get("tools"):
-                            data["tools"] = exp_data["tools"]
-                        # NEW: Also get workplaces from experience_json if not in work_experience table
-                        if not data.get("workplaces") and exp_data.get("workplaces"):
-                            data["workplaces"] = exp_data["workplaces"]
-                        # NEW: Get current_location and availability from experience_json if available
-                        if exp_data.get("current_location") and not data.get("current_location"):
-                            data["current_location"] = exp_data["current_location"]
-                        if exp_data.get("availability") and not data.get("availability"):
-                            data["availability"] = exp_data["availability"]
-                    except (TypeError, json.JSONDecodeError):
-                        pass
+            # Parse workplaces JSON if available
+            if experience.get("workplaces"):
+                try:
+                    experience["workplaces"] = json.loads(experience["workplaces"])
+                except (TypeError, json.JSONDecodeError):
+                    logger.warning(f"Failed to parse workplaces JSON for {worker_id}")
+                    experience["workplaces"] = []
+            else:
+                experience["workplaces"] = []
+            
+            # Use float years if available, otherwise use integer years
+            if experience.get("experience_years_float") is not None:
+                experience["total_experience_years"] = experience["experience_years_float"]
+            else:
+                experience["total_experience_years"] = experience.get("experience_years", 0)
 
-            # Ensure tools field exists even if empty
-            if "tools" not in data:
-                data["tools"] = []
+            return experience
 
-            return data
         return None
     except Exception as e:
-        logger.error(f"Error getting experience for {worker_id}: {str(e)}", exc_info=True)
+        logger.error(f"Error fetching experience for {worker_id}: {str(e)}", exc_info=True)
         return None
     finally:
         if conn is not None:
