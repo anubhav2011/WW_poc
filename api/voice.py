@@ -429,13 +429,16 @@ async def submit_transcript(body: TranscriptSubmitRequest):
     # FLAG-BASED FLOW: Read exp_ready from database to verify it was set correctly
     logger.info("[DB_VERIFY] Verifying exp_ready flag was set correctly in database...")
     session = crud.get_voice_session(call_id)
-    exp_ready_from_db = bool(session.get("exp_ready", 0)) if session else False
+    
+    # Ensure exp_ready is properly converted to boolean for JSON response
+    exp_ready_value = session.get("exp_ready", 0) if session else 0
+    exp_ready_from_db = bool(exp_ready_value)
 
     logger.info(f"[DB_VERIFY] Database query result:")
     logger.info(f"[DB_VERIFY]   - Session exists: {session is not None}")
     if session:
         logger.info(
-            f"[DB_VERIFY]   - exp_ready (raw): {session.get('exp_ready')} (type: {type(session.get('exp_ready'))})")
+            f"[DB_VERIFY]   - exp_ready (raw): {exp_ready_value} (type: {type(exp_ready_value)})")
         logger.info(f"[DB_VERIFY]   - exp_ready (bool): {exp_ready_from_db}")
         logger.info(f"[DB_VERIFY]   - status: {session.get('status')}")
         logger.info(f"[DB_VERIFY]   - current_step: {session.get('current_step')}")
@@ -446,7 +449,7 @@ async def submit_transcript(body: TranscriptSubmitRequest):
         logger.info(f"✓ VERIFIED: exp_ready flag is TRUE in database")
     else:
         logger.error(
-            f"✗ ERROR: exp_ready flag is NOT TRUE in database (value: {session.get('exp_ready') if session else 'session not found'})")
+            f"✗ ERROR: exp_ready flag is NOT TRUE in database (value: {exp_ready_value})")
 
     # STEP 4: FLAG-BASED FLOW - Do NOT save experience to work_experience table or generate CV automatically
     # Experience is stored in voice_sessions.experience_json and will be saved after user confirmation
@@ -488,6 +491,11 @@ async def submit_transcript(body: TranscriptSubmitRequest):
         logger.info(f"  CV Generated: ✗ (will be generated after confirmation)")
         logger.info("=" * 80)
 
+        # Log the exact value being returned to frontend
+        logger.info(f"[RESPONSE] Returning to frontend:")
+        logger.info(f"[RESPONSE]   - exp_ready: {exp_ready_from_db} (type: {type(exp_ready_from_db).__name__})")
+        logger.info(f"[RESPONSE]   - exp_ready value in JSON will be: {'true' if exp_ready_from_db else 'false'}")
+        
         return JSONResponse(
             status_code=200,
             content={
@@ -499,7 +507,7 @@ async def submit_transcript(body: TranscriptSubmitRequest):
                 "experience_extracted": True,
                 "experience_saved": False,  # Not saved to work_experience table yet
                 "cv_generated": False,  # Not generated yet
-                "exp_ready": exp_ready_from_db,  # Read from database
+                "exp_ready": bool(exp_ready_from_db),  # Explicitly cast to boolean for JSON
                 "experience": experience,  # Include experience object for frontend review
             }
         )
@@ -513,6 +521,9 @@ async def submit_transcript(body: TranscriptSubmitRequest):
         logger.info(f"  Use /voice/call/link to link call_id to worker_id")
         logger.info("=" * 80)
 
+        logger.info(f"[RESPONSE] Returning to frontend (no worker_id):")
+        logger.info(f"[RESPONSE]   - exp_ready: {exp_ready_from_db} (type: {type(exp_ready_from_db).__name__})")
+        
         return JSONResponse(
             status_code=200,
             content={
@@ -524,7 +535,7 @@ async def submit_transcript(body: TranscriptSubmitRequest):
                 "experience_extracted": True,
                 "experience_saved": False,
                 "cv_generated": False,
-                "exp_ready": exp_ready_from_db,  # Read from database
+                "exp_ready": bool(exp_ready_from_db),  # Explicitly cast to boolean for JSON
                 "message": "Transcript saved as JSON file. Link call_id to worker_id to confirm experience.",
                 "link_endpoint": "/voice/call/link"
             }
