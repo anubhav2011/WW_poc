@@ -17,9 +17,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Add project root to path
-PROJECT_ROOT = Path(__file__).parent.parent
+try:
+    PROJECT_ROOT = Path(__file__).parent.parent
+except NameError:
+    # If __file__ is not defined, use current working directory
+    PROJECT_ROOT = Path.cwd()
+
 sys.path.insert(0, str(PROJECT_ROOT))
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
 from migration_base import MigrationRunner
 from _001_init_schema import InitializeSchema
