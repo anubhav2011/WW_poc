@@ -219,13 +219,17 @@ def extract_educational_data_llm(raw_ocr_text: str) -> Optional[Dict]:
     
     system_prompt = """You are an expert data extraction assistant specializing in Indian educational documents (marksheets, certificates, degrees).
 
-Your task is to extract structured information from OCR text and return ONLY a valid JSON object. Do not include any explanations or markdown formatting."""
+Your task is to extract structured information from OCR text and return ONLY a valid JSON object. Do not include any explanations or markdown formatting.
+
+IMPORTANT: You MUST extract the student's name and date of birth from the document if present. These fields are CRITICAL for identity verification."""
 
     user_prompt = f"""Extract the following information from this educational document (marksheet/certificate) OCR text:
 
-Required fields:
-- name: Student's full name (EXACT as printed on document, CRITICAL for verification)
-- dob: Date of birth in DD-MM-YYYY format (if present on document, CRITICAL for verification)
+Required fields (CRITICAL - MUST EXTRACT IF PRESENT):
+- name: Student's full name EXACTLY as printed on document (CRITICAL - used for identity verification)
+- dob: Date of birth in DD-MM-YYYY format (if visible on document, CRITICAL - used for identity verification)
+
+Other required fields:
 - document_type: Always "marksheet" for educational documents
 - qualification: Class/Standard (e.g., "Class 10", "Class 12", "Class X", "Class XII")
 - board: Board/Council name (e.g., "CBSE", "ICSE", "State Board", "UP Board")
@@ -235,13 +239,19 @@ Required fields:
 - marks_type: Either "CGPA" or "Percentage"
 - marks: The marks value with unit (e.g., "7.4 CGPA" or "85%")
 
+Extraction Priority (Search order):
+1. Student's Name - look for: "Name:", "Student Name:", "Candidate Name:", or the printed name field
+2. Date of Birth - look for: "DOB:", "Date of Birth:", "D.O.B:", birth date field, or enrollment records showing age/DOB
+3. If DOB not found, search enrollment/admission forms for birth year/date
+
 Critical instructions:
-1. Extract name and DOB EXACTLY as printed - these are used for verification against personal documents
-2. For qualification, normalize to "Class 10" or "Class 12" (not "X" or "XII")
-3. If DOB is not present on marksheet, set it to null
-4. If any other field is not found, set it to null
-5. Return ONLY a JSON object with these exact field names
-6. Do not include any explanations or markdown
+1. ALWAYS attempt to extract name and DOB - even if partially visible
+2. For name: use EXACT spelling from document, preserve capitalization
+3. For DOB: normalize to DD-MM-YYYY format if different format found
+4. If DOB is not present on marksheet, set to null (but try hard to find it)
+5. If any other field is not found, set it to null
+6. Return ONLY a JSON object with these exact field names
+7. Do not include any explanations or markdown
 
 OCR Text:
 \"\"\"
@@ -256,6 +266,9 @@ Return ONLY the JSON object:"""
         # Normalize date format if present
         if result.get('dob'):
             result['dob'] = normalize_date_format(result['dob'])
+            logger.info(f"[EDU-LLM] ✓ Extracted DOB: {result['dob']}")
+        else:
+            logger.warning(f"[EDU-LLM] ✗ No DOB found in educational document")
         
         # Normalize qualification
         if result.get('qualification'):
@@ -264,6 +277,12 @@ Return ONLY the JSON object:"""
                 result['qualification'] = 'Class 10'
             elif 'XII' in qual or '12' in qual:
                 result['qualification'] = 'Class 12'
+        
+        # Log extracted name
+        if result.get('name'):
+            logger.info(f"[EDU-LLM] ✓ Extracted name: {result.get('name')}")
+        else:
+            logger.warning(f"[EDU-LLM] ✗ No name found in educational document")
         
         logger.info(f"✓ Educational data extracted: name={result.get('name')}, qualification={result.get('qualification')}, dob={result.get('dob')}")
         return result

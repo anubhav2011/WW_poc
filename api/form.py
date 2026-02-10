@@ -170,31 +170,42 @@ async def process_ocr_background(worker_id: str, personal_doc_path: str, educati
         
         # Get extraction status
         extraction_status = crud.get_worker_extraction_status(worker_id)
+        logger.info(f"[VERIFICATION] Extraction status retrieved: {extraction_status}")
         
         if not extraction_status.get("personal_extracted"):
             logger.warning("⚠ Personal data not extracted, skipping verification")
             result["verification_status"] = "pending"
-            result["verification_errors"] = "Personal data not extracted"
+            result["verification_errors"] = "Personal data not extracted. Please upload a valid personal document with name and date of birth."
             return result
         
         if extraction_status.get("educational_extracted", 0) == 0:
             logger.warning("⚠ No educational documents extracted, skipping verification")
             result["verification_status"] = "pending"
-            result["verification_errors"] = "No educational documents extracted"
+            result["verification_errors"] = "No educational documents saved. Please upload your educational certificates/marksheets."
             return result
+        
+        logger.info(f"[VERIFICATION] ✓ Found {extraction_status.get('educational_extracted')} educational document(s) saved")
         
         # Get personal extracted data
         personal_name = extraction_status.get("personal_name")
         personal_dob = extraction_status.get("personal_dob")
         
+        logger.info(f"[VERIFICATION] Personal data to verify: name='{personal_name}', dob='{personal_dob}'")
+        
         # Get educational documents for verification
         educational_docs = crud.get_educational_documents_for_verification(worker_id)
+        logger.info(f"[VERIFICATION] Retrieved {len(educational_docs)} educational documents from database")
         
-        logger.info(f"Verifying {len(educational_docs)} educational document(s) against personal data")
-        logger.info(f"Personal data: name='{personal_name}', dob='{personal_dob}'")
+        # Log details of what we're verifying
+        for doc in educational_docs:
+            logger.info(f"[VERIFICATION]   Doc ID {doc['id']}: {doc['qualification']}, extracted_name='{doc['extracted_name']}', extracted_dob='{doc['extracted_dob']}'")
+        
+        logger.info(f"[VERIFICATION] Verifying {len(educational_docs)} educational document(s) against personal data")
+        logger.info(f"[VERIFICATION] Personal data: name='{personal_name}', dob='{personal_dob}'")
         
         # Run verification
         verification_result = verify_documents(personal_name, personal_dob, educational_docs)
+        logger.info(f"[VERIFICATION] Verification result: {verification_result['status']}, {verification_result['verified_count']}/{verification_result['total_count']} verified")
         
         # Update verification status in database
         if verification_result['status'] == 'verified':
@@ -215,6 +226,8 @@ async def process_ocr_background(worker_id: str, personal_doc_path: str, educati
             logger.warning(f"✗✗✗ VERIFICATION FAILED ✗✗✗")
             logger.warning(f"Only {verification_result['verified_count']}/{verification_result['total_count']} documents verified")
             logger.warning(f"Mismatches: {len(verification_result['mismatches'])}")
+            for mismatch in verification_result['mismatches']:
+                logger.warning(f"  - {mismatch['field'].upper()}: personal='{mismatch['personal_value']}', document='{mismatch['document_value']}'")
             logger.warning(f"{'=' * 80}\n")
             
             crud.update_worker_verification(

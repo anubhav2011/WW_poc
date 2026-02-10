@@ -354,9 +354,10 @@ def format_verification_error_message(verification_result: Dict) -> str:
     mismatches = verification_result.get('mismatches', [])
     
     if not mismatches:
-        return "Document verification failed. Please ensure all documents are clear and match your personal information."
+        return "Document verification failed. Please ensure all documents are clear, legible, and contain matching personal information."
     
-    error_lines = ["Your documents don't match. Please check the following:\n"]
+    error_lines = ["❌ Your details are not matching. Please reupload the document.\n\n"]
+    error_lines.append("Details that don't match:\n")
     
     # Group mismatches by document
     doc_errors = {}
@@ -374,15 +375,24 @@ def format_verification_error_message(verification_result: Dict) -> str:
         personal = mismatch['personal_value']
         document = mismatch['document_value']
         
-        doc_errors[doc_id]['errors'].append(
-            f"  - {field}: Personal document shows '{personal}' but {qual} shows '{document}'"
-        )
+        if field == 'NAME':
+            error_msg = f"  • Name mismatch: Personal document shows \"{personal}\" but your {qual} shows \"{document}\""
+        elif field == 'DOB':
+            error_msg = f"  • Date of Birth mismatch: Personal document shows \"{personal}\" but your {qual} shows \"{document}\""
+        else:
+            error_msg = f"  • {field}: Personal document shows \"{personal}\" but {qual} shows \"{document}\""
+        
+        doc_errors[doc_id]['errors'].append(error_msg)
     
     # Format error message
     for doc_id, info in doc_errors.items():
-        error_lines.append(f"\n{info['qualification']} Marksheet:")
+        error_lines.append(f"\n📄 {info['qualification']}:")
         error_lines.extend(info['errors'])
     
-    error_lines.append("\n\nPlease upload correct documents that match your personal information.")
+    error_lines.append("\n\n📋 Action required:")
+    error_lines.append("1. Make sure both documents have the same name and date of birth")
+    error_lines.append("2. Check for spelling errors or OCR mistakes")
+    error_lines.append("3. Upload clear, legible scans/photos of your documents")
+    error_lines.append("\n💡 Tip: Ensure the name and DOB are exactly the same on both your personal document (ID/Passport) and educational certificate/marksheet.")
     
     return "\n".join(error_lines)

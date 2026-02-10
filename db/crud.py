@@ -1488,6 +1488,13 @@ def save_educational_document_with_llm_data(
         logger.info(f"[EDU+LLM SAVE] Saving educational document with LLM data for {worker_id}")
         logger.info(f"[EDU+LLM SAVE] Education data: {education_data}")
         
+        # Extract and validate name and DOB - CRITICAL FOR VERIFICATION
+        extracted_name = education_data.get("name") or ""
+        extracted_dob = education_data.get("dob") or ""
+        
+        logger.info(f"[EDU+LLM SAVE] Extracted name: '{extracted_name}' (empty={not extracted_name})")
+        logger.info(f"[EDU+LLM SAVE] Extracted DOB: '{extracted_dob}' (empty={not extracted_dob})")
+        
         # Convert percentage to float if it exists
         percentage = education_data.get("percentage")
         if percentage and isinstance(percentage, str):
@@ -1520,12 +1527,13 @@ def save_educational_document_with_llm_data(
             percentage,
             raw_ocr_text,
             llm_data_json,
-            education_data.get("name"),  # extracted_name for verification
-            education_data.get("dob"),   # extracted_dob for verification
+            extracted_name if extracted_name else None,  # extracted_name for verification
+            extracted_dob if extracted_dob else None,   # extracted_dob for verification
             'pending'  # Initial verification status
         ))
         conn.commit()
         logger.info(f"[EDU+LLM SAVE] ✓ Educational document with LLM data saved successfully for {worker_id}")
+        logger.info(f"[EDU+LLM SAVE] Name saved: {bool(extracted_name)}, DOB saved: {bool(extracted_dob)}")
         return True
     except Exception as e:
         logger.error(f"[EDU+LLM SAVE] ✗ Error saving educational document for {worker_id}: {str(e)}", exc_info=True)
@@ -1584,7 +1592,7 @@ def get_worker_extraction_status(worker_id: str) -> dict:
             "personal_extracted": bool,
             "personal_name": str or None,
             "personal_dob": str or None,
-            "educational_extracted": int (count),
+            "educational_extracted": int (count of saved educational documents),
             "verification_status": str
         }
     """
@@ -1612,24 +1620,39 @@ def get_worker_extraction_status(worker_id: str) -> dict:
             verification_status = row[2] or 'pending'
             personal_extracted = bool(personal_name and personal_dob)
         
-        # Check educational extraction (count documents with extracted_name)
+        logger.info(f"[EXTRACTION_STATUS] Personal extracted: {personal_extracted}, name='{personal_name}', dob='{personal_dob}'")
+        
+        # Check educational extraction - COUNT ALL SAVED DOCUMENTS (even if name/dob not extracted)
+        cursor.execute("""
+        SELECT COUNT(*) 
+        FROM educational_documents 
+        WHERE worker_id = ?
+        """, (worker_id,))
+        row = cursor.fetchone()
+        edu_count = row[0] if row else 0
+        
+        logger.info(f"[EXTRACTION_STATUS] Educational documents saved: {edu_count}")
+        
+        # Also check how many have extracted name for detailed logging
         cursor.execute("""
         SELECT COUNT(*) 
         FROM educational_documents 
         WHERE worker_id = ? AND extracted_name IS NOT NULL AND extracted_name != ''
         """, (worker_id,))
         row = cursor.fetchone()
-        edu_count = row[0] if row else 0
+        edu_with_name = row[0] if row else 0
+        
+        logger.info(f"[EXTRACTION_STATUS] Educational documents with extracted name: {edu_with_name}")
         
         result = {
             "personal_extracted": personal_extracted,
             "personal_name": personal_name,
             "personal_dob": personal_dob,
-            "educational_extracted": edu_count,
+            "educational_extracted": edu_count,  # Count of total documents saved
             "verification_status": verification_status
         }
         
-        logger.info(f"Extraction status for {worker_id}: {result}")
+        logger.info(f"[EXTRACTION_STATUS] Final status for {worker_id}: {result}")
         return result
     except Exception as e:
         logger.error(f"Error getting extraction status for {worker_id}: {str(e)}", exc_info=True)
