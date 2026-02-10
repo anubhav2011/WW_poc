@@ -354,15 +354,10 @@ def calculate_total_experience_duration(workplaces):
     Calculate total experience duration from all workplaces.
     Returns duration in months as integer.
 
-    Expects workplaces format: [
-        {
-            "company_name": "ABC Corp",
-            "start_date": "2020-01",
-            "end_date": "2023-06",
-            "duration_months": 42
-        },
-        ...
-    ]
+    Supports multiple formats:
+    1. work_duration: "10 years", "2 years", "6 months" (string)
+    2. duration_months: 42 (integer)
+    3. start_date + end_date: "2020-01" to "2023-06"
     """
     total_months = 0
 
@@ -371,12 +366,43 @@ def calculate_total_experience_duration(workplaces):
 
     for workplace in workplaces:
         try:
-            # If duration_months is already provided, use it
+            # PRIORITY 1: Parse work_duration string (NEW - for voice transcript format)
+            if "work_duration" in workplace and workplace["work_duration"]:
+                duration_str = str(workplace["work_duration"]).lower().strip()
+                
+                # Extract numbers and units
+                import re
+                
+                # Match patterns like "10 years", "2 year", "6 months", "1.5 years"
+                years_match = re.search(r'(\d+\.?\d*)\s*(?:year|yr|y)', duration_str)
+                months_match = re.search(r'(\d+\.?\d*)\s*(?:month|mon|m)', duration_str)
+                
+                workplace_months = 0
+                if years_match:
+                    years = float(years_match.group(1))
+                    workplace_months += int(years * 12)
+                    logger.info(f"[EXPERIENCE] Parsed {years} years = {int(years * 12)} months from '{duration_str}'")
+                
+                if months_match:
+                    months = float(months_match.group(1))
+                    workplace_months += int(months)
+                    logger.info(f"[EXPERIENCE] Parsed {months} months from '{duration_str}'")
+                
+                if workplace_months > 0:
+                    total_months += workplace_months
+                    continue
+                else:
+                    logger.warning(f"[EXPERIENCE] Could not parse work_duration: '{duration_str}'")
+            
+            # PRIORITY 2: If duration_months is already provided, use it
             if "duration_months" in workplace and workplace["duration_months"]:
                 duration = int(workplace.get("duration_months", 0))
                 total_months += max(0, duration)
-            # Otherwise try to calculate from dates
-            elif "start_date" in workplace and "end_date" in workplace:
+                logger.info(f"[EXPERIENCE] Using duration_months: {duration} months")
+                continue
+            
+            # PRIORITY 3: Calculate from dates
+            if "start_date" in workplace and "end_date" in workplace:
                 from datetime import datetime
                 start_str = str(workplace["start_date"]).strip()
                 end_str = str(workplace["end_date"]).strip()
@@ -394,11 +420,15 @@ def calculate_total_experience_duration(workplaces):
 
                 months = (end.year - start.year) * 12 + (end.month - start.month)
                 total_months += max(0, months)
+                logger.info(f"[EXPERIENCE] Calculated from dates: {months} months")
+                
         except (ValueError, TypeError, AttributeError) as e:
             logger.warning(f"Could not calculate duration for workplace {workplace}: {str(e)}")
             continue
 
-    logger.info(f"[EXPERIENCE] Calculated total duration: {total_months} months ({total_months / 12:.1f} years)")
+    total_years = total_months / 12.0
+    logger.info(f"[EXPERIENCE] ✓ Total experience calculated: {total_months} months ({total_years:.1f} years)")
+    logger.info(f"[EXPERIENCE]   - From {len(workplaces)} workplace(s)")
     return total_months
 
 
@@ -450,11 +480,17 @@ def save_experience(worker_id: str, experience_data: dict) -> bool:
             workplaces = []
         workplaces_json = json.dumps(workplaces, ensure_ascii=False) if workplaces else None
 
-        logger.info(
-            f"Saving experience for {worker_id}: job_title={job_title}, years={experience_years}, workplaces={len(workplaces)}")
-
         # Calculate total experience duration from all workplaces
         total_duration_months = calculate_total_experience_duration(workplaces)
+        
+        # If workplaces exist with durations, override experience_years with calculated total
+        if workplaces and total_duration_months > 0:
+            calculated_years = int(total_duration_months / 12)
+            logger.info(f"[EXPERIENCE] Overriding experience_years: {experience_years} → {calculated_years} (from workplaces)")
+            experience_years = calculated_years
+        
+        logger.info(
+            f"[EXPERIENCE] Saving experience for {worker_id}: job_title={job_title}, years={experience_years}, workplaces={len(workplaces)}, total_months={total_duration_months}")
 
         # Check if experience already exists - update instead of insert
         cursor.execute("SELECT id FROM work_experience WHERE worker_id = ? ORDER BY created_at DESC LIMIT 1",
