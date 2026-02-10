@@ -146,7 +146,10 @@ async def process_ocr_background(worker_id: str, personal_doc_path: str, educati
                 logger.warning(f"  ✗ LLM extraction failed for educational document")
                 continue
             
-            logger.info(f"  ✓ LLM extracted: qualification={edu_data.get('qualification')}, name={edu_data.get('name')}")
+            logger.info(f"  [EXTRACTION_CHECK] LLM returned edu_data with keys: {list(edu_data.keys())}")
+            logger.info(f"  [EXTRACTION_CHECK] name field: {repr(edu_data.get('name'))} (is_none={edu_data.get('name') is None})")
+            logger.info(f"  [EXTRACTION_CHECK] dob field: {repr(edu_data.get('dob'))} (is_none={edu_data.get('dob') is None})")
+            logger.info(f"  ✓ LLM extracted: qualification={edu_data.get('qualification')}, name={edu_data.get('name')}, dob={edu_data.get('dob')}")
             
             # Save educational document with LLM data
             edu_saved = crud.save_educational_document_with_llm_data(

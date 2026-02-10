@@ -263,12 +263,17 @@ Return ONLY the JSON object:"""
     result = call_llm_with_retry(user_prompt, system_prompt)
     
     if result:
+        logger.info(f"[EDU-LLM] [STEP 1] LLM returned result with keys: {list(result.keys())}")
+        logger.info(f"[EDU-LLM] [STEP 1] Raw name value: {repr(result.get('name'))} (type: {type(result.get('name')).__name__ if result.get('name') else 'NoneType'})")
+        logger.info(f"[EDU-LLM] [STEP 1] Raw dob value: {repr(result.get('dob'))} (type: {type(result.get('dob')).__name__ if result.get('dob') else 'NoneType'})")
+        
         # Normalize date format if present
         if result.get('dob'):
+            original_dob = result.get('dob')
             result['dob'] = normalize_date_format(result['dob'])
-            logger.info(f"[EDU-LLM] ✓ Extracted DOB: {result['dob']}")
+            logger.info(f"[EDU-LLM] [STEP 2] DOB normalized: {repr(original_dob)} -> {repr(result['dob'])}")
         else:
-            logger.warning(f"[EDU-LLM] ✗ No DOB found in educational document")
+            logger.warning(f"[EDU-LLM] [STEP 2] ✗ No DOB found in educational document (None or empty)")
         
         # Normalize qualification
         if result.get('qualification'):
@@ -278,13 +283,18 @@ Return ONLY the JSON object:"""
             elif 'XII' in qual or '12' in qual:
                 result['qualification'] = 'Class 12'
         
-        # Log extracted name
+        # Log extracted name with detailed validation
         if result.get('name'):
-            logger.info(f"[EDU-LLM] ✓ Extracted name: {result.get('name')}")
+            logger.info(f"[EDU-LLM] [STEP 2] ✓ Name extracted: {repr(result.get('name'))}")
         else:
-            logger.warning(f"[EDU-LLM] ✗ No name found in educational document")
+            logger.warning(f"[EDU-LLM] [STEP 2] ✗ No name found in educational document (None or empty)")
         
-        logger.info(f"✓ Educational data extracted: name={result.get('name')}, qualification={result.get('qualification')}, dob={result.get('dob')}")
+        logger.info(f"[EDU-LLM] [FINAL] ✓ Educational data extracted successfully:")
+        logger.info(f"[EDU-LLM]         name={repr(result.get('name'))}")
+        logger.info(f"[EDU-LLM]         dob={repr(result.get('dob'))}")
+        logger.info(f"[EDU-LLM]         qualification={result.get('qualification')}")
+        logger.info(f"[EDU-LLM]         board={result.get('board')}")
+        logger.info(f"[EDU-LLM]         school_name={result.get('school_name')}")
         return result
     else:
         logger.error("✗ Failed to extract educational data with LLM")

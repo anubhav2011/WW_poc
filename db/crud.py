@@ -1486,11 +1486,15 @@ def save_educational_document_with_llm_data(
         cursor = conn.cursor()
         
         logger.info(f"[EDU+LLM SAVE] Saving educational document with LLM data for {worker_id}")
-        logger.info(f"[EDU+LLM SAVE] Education data: {education_data}")
+        logger.info(f"[EDU+LLM SAVE] Education data keys: {list(education_data.keys()) if education_data else 'None'}")
+        logger.info(f"[EDU+LLM SAVE] Full education data: {education_data}")
         
         # Extract and validate name and DOB - CRITICAL FOR VERIFICATION
         extracted_name = education_data.get("name")
         extracted_dob = education_data.get("dob")
+        
+        logger.info(f"[EDU+LLM SAVE] [STEP 1] Raw extracted_name from dict: {repr(extracted_name)} (type: {type(extracted_name).__name__})")
+        logger.info(f"[EDU+LLM SAVE] [STEP 1] Raw extracted_dob from dict: {repr(extracted_dob)} (type: {type(extracted_dob).__name__})")
         
         # Ensure we're not storing null/None, only strings or None
         if extracted_name:
@@ -1503,9 +1507,14 @@ def save_educational_document_with_llm_data(
             if not extracted_dob:
                 extracted_dob = None
         
-        logger.info(f"[EDU+LLM SAVE] Raw data from LLM: name={repr(education_data.get('name'))}, dob={repr(education_data.get('dob'))}")
-        logger.info(f"[EDU+LLM SAVE] After processing: extracted_name={repr(extracted_name)}, extracted_dob={repr(extracted_dob)}")
-        logger.info(f"[EDU+LLM SAVE] Will save: name_is_null={extracted_name is None}, dob_is_null={extracted_dob is None}")
+        logger.info(f"[EDU+LLM SAVE] [STEP 2] After string conversion & strip:")
+        logger.info(f"[EDU+LLM SAVE]          extracted_name={repr(extracted_name)} (type: {type(extracted_name).__name__ if extracted_name else 'NoneType'})")
+        logger.info(f"[EDU+LLM SAVE]          extracted_dob={repr(extracted_dob)} (type: {type(extracted_dob).__name__ if extracted_dob else 'NoneType'})")
+        
+        # Final validation
+        logger.info(f"[EDU+LLM SAVE] [STEP 3] Final null checks:")
+        logger.info(f"[EDU+LLM SAVE]          name_is_null={extracted_name is None}, name_empty={extracted_name == ''}")
+        logger.info(f"[EDU+LLM SAVE]          dob_is_null={extracted_dob is None}, dob_empty={extracted_dob == ''}")
         
         # Convert percentage to float if it exists
         percentage = education_data.get("percentage")
@@ -1543,7 +1552,31 @@ def save_educational_document_with_llm_data(
             extracted_dob if extracted_dob else None,   # extracted_dob for verification
             'pending'  # Initial verification status
         ))
+        
+        logger.info(f"[EDU+LLM SAVE] [STEP 4] INSERT executed, values passed to DB:")
+        logger.info(f"[EDU+LLM SAVE]          extracted_name param={repr(extracted_name if extracted_name else None)}")
+        logger.info(f"[EDU+LLM SAVE]          extracted_dob param={repr(extracted_dob if extracted_dob else None)}")
+        
         conn.commit()
+        
+        # Verify what was actually saved in the database
+        doc_id = cursor.lastrowid
+        cursor.execute("""
+        SELECT id, extracted_name, extracted_dob, verification_status 
+        FROM educational_documents 
+        WHERE id = ?
+        """, (doc_id,))
+        saved_row = cursor.fetchone()
+        
+        if saved_row:
+            logger.info(f"[EDU+LLM SAVE] [STEP 5] ✓ Verified in database:")
+            logger.info(f"[EDU+LLM SAVE]          doc_id={saved_row[0]}")
+            logger.info(f"[EDU+LLM SAVE]          saved_name={repr(saved_row[1])} (is_null={saved_row[1] is None})")
+            logger.info(f"[EDU+LLM SAVE]          saved_dob={repr(saved_row[2])} (is_null={saved_row[2] is None})")
+            logger.info(f"[EDU+LLM SAVE]          status={saved_row[3]}")
+        else:
+            logger.warning(f"[EDU+LLM SAVE] ✗ Could not verify saved row in database")
+        
         logger.info(f"[EDU+LLM SAVE] ✓ Educational document with LLM data saved successfully for {worker_id}")
         logger.info(f"[EDU+LLM SAVE] Name saved: {bool(extracted_name)}, DOB saved: {bool(extracted_dob)}")
         return True
