@@ -626,10 +626,12 @@ async def get_worker_data(worker_id: str):
         call_id_for_confirmation = None
 
         logger.info("[EXP_READY] Checking experience ready status...")
+        logger.info(f"[EXP_READY] Worker ID: {worker_id}, Mobile: {worker_dict.get('mobile_number')}")
+        
         latest_session = crud.get_latest_voice_session_by_worker(worker_id)
 
         if latest_session:
-            logger.info(f"[EXP_READY] Latest voice session found for worker {worker_id}")
+            logger.info(f"[EXP_READY] Latest voice session found by worker_id {worker_id}")
             logger.info(f"[EXP_READY]   - call_id: {latest_session.get('call_id')}")
             logger.info(
                 f"[EXP_READY]   - exp_ready (raw): {latest_session.get('exp_ready')} (type: {type(latest_session.get('exp_ready')).__name__})")
@@ -662,7 +664,39 @@ async def get_worker_data(worker_id: str):
             else:
                 logger.info(f"[EXP_READY] exp_ready={exp_ready}, experience data not ready yet")
         else:
-            logger.info(f"[EXP_READY] No voice session found for worker {worker_id}")
+            logger.info(f"[EXP_READY] No voice session found for worker_id {worker_id}")
+            
+            # FALLBACK: Try to find session by mobile number (handles worker_id mismatch)
+            mobile_number = worker_dict.get('mobile_number')
+            if mobile_number:
+                logger.info(f"[EXP_READY] Attempting fallback lookup by mobile: {mobile_number}")
+                latest_session = crud.get_latest_voice_session_by_mobile(mobile_number)
+                
+                if latest_session:
+                    session_worker_id = latest_session.get('worker_id')
+                    logger.warning(f"[EXP_READY] ⚠ Found session by mobile but different worker_id!")
+                    logger.warning(f"[EXP_READY]   - Session worker_id: {session_worker_id}")
+                    logger.warning(f"[EXP_READY]   - Current worker_id: {worker_id}")
+                    logger.warning(f"[EXP_READY]   - This indicates the transcript was submitted with a different worker_id")
+                    
+                    # Use the session data since mobile matches
+                    exp_ready_value = latest_session.get("exp_ready", False)
+                    exp_ready = bool(exp_ready_value)
+                    
+                    logger.info(f"[EXP_READY] Using session from mobile lookup:")
+                    logger.info(f"[EXP_READY]   - call_id: {latest_session.get('call_id')}")
+                    logger.info(f"[EXP_READY]   - exp_ready: {exp_ready}")
+                    
+                    if exp_ready and latest_session.get("experience_json"):
+                        try:
+                            experience_data = json.loads(latest_session["experience_json"])
+                            call_id_for_confirmation = latest_session.get("call_id")
+                            logger.info(f"[EXP_READY] ✓ Experience data parsed from mobile lookup (exp_ready={exp_ready})")
+                        except (TypeError, json.JSONDecodeError) as e:
+                            logger.warning(f"[EXP_READY] Failed to parse experience JSON: {str(e)}")
+                            experience_data = None
+                else:
+                    logger.info(f"[EXP_READY] No voice session found by mobile either")
 
         logger.info(f"Returning worker data for {worker_id}:")
         logger.info(

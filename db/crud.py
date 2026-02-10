@@ -876,6 +876,50 @@ def get_latest_voice_session_by_worker(worker_id: str) -> dict:
             conn.close()
 
 
+def get_latest_voice_session_by_mobile(mobile_number: str) -> dict:
+    """
+    Get the latest voice session for a mobile number (fallback when worker_id lookup fails).
+    Returns most recent session with exp_ready flag status (as boolean).
+    
+    This is useful when voice session is created with one worker_id but 
+    frontend queries with a different worker_id (e.g., after re-signup).
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Extract just the phone number from call_id pattern (e.g., "MZ..._{mobile}")
+        cursor.execute("""
+        SELECT * FROM voice_sessions 
+        WHERE call_id LIKE '%' || ? 
+        ORDER BY updated_at DESC 
+        LIMIT 1
+        """, (mobile_number,))
+        row = cursor.fetchone()
+        
+        if row:
+            session_dict = dict(row)
+            # Convert exp_ready from integer (0/1) to boolean for JSON response
+            if 'exp_ready' in session_dict and session_dict['exp_ready'] is not None:
+                session_dict['exp_ready'] = bool(session_dict['exp_ready'])
+            
+            logger.info(f"[VOICE SESSION] Found session by mobile {mobile_number}:")
+            logger.info(f"  - call_id: {session_dict.get('call_id')}")
+            logger.info(f"  - worker_id: {session_dict.get('worker_id')}")
+            logger.info(f"  - exp_ready: {session_dict.get('exp_ready')}")
+            return session_dict
+        
+        logger.info(f"No voice sessions found for mobile {mobile_number}")
+        return None
+    except Exception as e:
+        logger.error(f"Error getting voice session by mobile {mobile_number}: {str(e)}", exc_info=True)
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def update_exp_ready(call_id: str, exp_ready: bool = True) -> bool:
     """
     Update exp_ready flag for a voice session.
