@@ -43,8 +43,10 @@ def run_all_migrations():
     
     # Define migrations in order
     InitSchema = load_migration("_001_init_schema", "InitializeSchema")
+    AddVerification = load_migration("_002_add_verification_columns", "AddVerificationColumns")
     migrations = [
         InitSchema(),
+        AddVerification(),
     ]
     
     # Run migrations
@@ -84,6 +86,9 @@ def rollback_last():
     if last_migration_name == "InitializeSchema":
         InitSchema = load_migration("_001_init_schema", "InitializeSchema")
         migration = InitSchema()
+    elif last_migration_name == "AddVerificationColumns":
+        AddVerification = load_migration("_002_add_verification_columns", "AddVerificationColumns")
+        migration = AddVerification()
     else:
         logger.error(f"Unknown migration: {last_migration_name}")
         return False
